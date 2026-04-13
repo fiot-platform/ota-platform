@@ -1,0 +1,47 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using OTA.API.Models.DTOs;
+using OTA.API.Models.Enums;
+
+namespace OTA.API.Services.Interfaces
+{
+    /// <summary>
+    /// Service interface for dashboard and reporting aggregations across the OTA platform.
+    /// </summary>
+    public interface IReportService
+    {
+        /// <summary>
+        /// Returns a high-level dashboard summary of device counts, firmware status, and rollout activity.
+        /// CustomerAdmin callers are automatically scoped to their customerId.
+        /// </summary>
+        /// <param name="userId">The identifier of the requesting user.</param>
+        /// <param name="role">The role of the requesting user for scoping logic.</param>
+        /// <param name="customerId">The customer identifier used to scope results for CustomerAdmin callers.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A <see cref="DashboardSummaryDto"/> containing aggregated counts and status breakdowns.</returns>
+        Task<DashboardSummaryDto> GetDashboardSummaryAsync(string userId, UserRole role, string? customerId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns a time-series trend of firmware approvals over the specified number of days for charting.
+        /// </summary>
+        /// <param name="days">The lookback window in days (e.g. 30 for last 30 days).</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>List of daily firmware approval counts.</returns>
+        Task<List<FirmwareApprovalTrendDto>> GetFirmwareApprovalTrendAsync(int days, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns rollout success rates per project. When projectId is null, returns rates for all projects.
+        /// </summary>
+        /// <param name="projectId">Optional project identifier. Null returns all projects.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task<List<RolloutSuccessRateDto>> GetRolloutSuccessRateAsync(string? projectId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns device update status. When customerId is null (SuperAdmin), returns platform-wide stats.
+        /// </summary>
+        /// <param name="customerId">Optional customer identifier. Null returns platform-wide data.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task<List<DeviceUpdateStatusDto>> GetDeviceUpdateStatusAsync(string? customerId, CancellationToken cancellationToken = default);
+    }
+}
