@@ -8,6 +8,7 @@ import { X, Package, Loader2, Plus, Trash2, UploadCloud, CheckCircle2, AlertCirc
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQuery } from '@tanstack/react-query'
 import { repositoryService } from '@/services/repository.service'
+import { projectService } from '@/services/project.service'
 import { firmwareService } from '@/services/firmware.service'
 import { FirmwareChannel, FirmwareVersion } from '@/types'
 import { formatFileSize } from '@/utils/formatters'
@@ -21,9 +22,9 @@ const firmwareSchema = z.object({
   channel: z.nativeEnum(FirmwareChannel),
   releaseNotes: z.string().max(10000).optional(),
   fileName: z.string().max(255).optional(),
+  storedFileName: z.string().max(512).optional(),
   fileSha256: z.string().max(64).optional(),
   fileSizeBytes: z.coerce.number().min(0).optional(),
-  downloadUrl: z.string().url('Must be a valid URL').optional().or(z.literal('')),
   isMandate: z.boolean(),
   minRequiredVersion: z.string().max(50).optional(),
   maxAllowedVersion: z.string().max(50).optional(),
@@ -48,13 +49,13 @@ type EditFormValues = z.infer<typeof editSchema>
 type UploadState =
   | { status: 'idle' }
   | { status: 'uploading'; progress: number }
-  | { status: 'done'; fileName: string; fileSizeBytes: number; fileSha256: string; downloadUrl: string }
+  | { status: 'done'; fileName: string; storedFileName: string; fileSizeBytes: number; fileSha256: string; downloadUrl: string }
   | { status: 'error'; message: string }
 
 function FileUploadZone({
   onUploaded,
 }: {
-  onUploaded: (result: { fileName: string; fileSizeBytes: number; fileSha256: string; downloadUrl: string }) => void
+  onUploaded: (result: { fileName: string; storedFileName: string; fileSizeBytes: number; fileSha256: string; downloadUrl: string }) => void
 }) {
   const [state, setState] = React.useState<UploadState>({ status: 'idle' })
   const inputRef = React.useRef<HTMLInputElement>(null)
@@ -67,6 +68,7 @@ function FileUploadZone({
       setState({
         status: 'done',
         fileName: result.fileName,
+        storedFileName: result.storedFileName,
         fileSizeBytes: result.fileSizeBytes,
         fileSha256: result.fileSha256,
         downloadUrl: result.downloadUrl,
@@ -243,9 +245,9 @@ export function CreateFirmwareForm({
       channel: FirmwareChannel.Alpha,
       releaseNotes: '',
       fileName: '',
+      storedFileName: '',
       fileSha256: '',
       fileSizeBytes: 0,
-      downloadUrl: '',
       isMandate: false,
       minRequiredVersion: '',
       maxAllowedVersion: '',
@@ -255,14 +257,23 @@ export function CreateFirmwareForm({
 
   const supportedModels = watch('supportedModels') ?? []
 
-  const { data: repos } = useQuery({
-    queryKey: ['repositories-all'],
-    queryFn: () => repositoryService.getRepositories({ pageSize: 200 }),
+  const [selectedProjectId, setSelectedProjectId] = React.useState('')
+
+  const { data: projects } = useQuery({
+    queryKey: ['projects-all'],
+    queryFn: () => projectService.getProjects({ pageSize: 200 }),
     enabled: !preselectedRepositoryId,
+  })
+
+  const { data: repos } = useQuery({
+    queryKey: ['repositories-by-project', selectedProjectId],
+    queryFn: () => repositoryService.getRepositories({ projectId: selectedProjectId || undefined, pageSize: 200 }),
+    enabled: !preselectedRepositoryId && !!selectedProjectId,
   })
 
   React.useEffect(() => {
     if (open) {
+      setSelectedProjectId('')
       reset({
         repositoryId: preselectedRepositoryId ?? '',
         version: '',
@@ -270,9 +281,9 @@ export function CreateFirmwareForm({
         channel: FirmwareChannel.Alpha,
         releaseNotes: '',
         fileName: '',
+        storedFileName: '',
         fileSha256: '',
         fileSizeBytes: 0,
-        downloadUrl: '',
         isMandate: false,
         minRequiredVersion: '',
         maxAllowedVersion: '',
@@ -308,7 +319,28 @@ export function CreateFirmwareForm({
             </div>
 
             <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
-              {/* Repository */}
+              {/* Project + Repository */}
+              {!preselectedRepositoryId && (
+                <div>
+                  <label className="label">
+                    Project <span className="text-danger-500">*</span>
+                  </label>
+                  <select
+                    className="input"
+                    value={selectedProjectId}
+                    onChange={(e) => {
+                      setSelectedProjectId(e.target.value)
+                      setValue('repositoryId', '')
+                    }}
+                  >
+                    <option value="">Select a project...</option>
+                    {(projects?.items ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="label">
                   Repository <span className="text-danger-500">*</span>
@@ -322,10 +354,13 @@ export function CreateFirmwareForm({
                   />
                 ) : (
                   <select
-                    className={`input ${errors.repositoryId ? 'border-danger-400' : ''}`}
+                    className={`input ${errors.repositoryId ? 'border-danger-400' : ''} ${!selectedProjectId ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : ''}`}
+                    disabled={!selectedProjectId}
                     {...register('repositoryId')}
                   >
-                    <option value="">Select a repository...</option>
+                    <option value="">
+                      {selectedProjectId ? 'Select a repository...' : 'Select a project first...'}
+                    </option>
                     {(repos?.items ?? []).map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.giteaOwner}/{r.giteaRepo ?? r.name}
@@ -389,56 +424,11 @@ export function CreateFirmwareForm({
                 <FileUploadZone
                   onUploaded={(result) => {
                     setValue('fileName', result.fileName)
+                    setValue('storedFileName', result.storedFileName)
                     setValue('fileSha256', result.fileSha256)
                     setValue('fileSizeBytes', result.fileSizeBytes)
-                    setValue('downloadUrl', result.downloadUrl)
                   }}
                 />
-              </div>
-
-              {/* Download URL + File Name (auto-filled, still editable) */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Download URL</label>
-                  <input
-                    type="text"
-                    placeholder="http://…  (auto-filled after upload)"
-                    className={`input text-xs font-mono ${errors.downloadUrl ? 'border-danger-400' : ''}`}
-                    {...register('downloadUrl')}
-                  />
-                  {errors.downloadUrl && <p className="form-error">{errors.downloadUrl.message}</p>}
-                </div>
-                <div>
-                  <label className="label">File Name</label>
-                  <input
-                    type="text"
-                    placeholder="firmware-v2.4.1.bin"
-                    className="input font-mono"
-                    {...register('fileName')}
-                  />
-                </div>
-              </div>
-
-              {/* SHA256 + File Size */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">SHA-256 Checksum</label>
-                  <input
-                    type="text"
-                    placeholder="64-char hex  (auto-filled after upload)"
-                    className="input font-mono text-xs"
-                    {...register('fileSha256')}
-                  />
-                </div>
-                <div>
-                  <label className="label">File Size (bytes)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="input"
-                    {...register('fileSizeBytes')}
-                  />
-                </div>
               </div>
 
               {/* Version constraints */}

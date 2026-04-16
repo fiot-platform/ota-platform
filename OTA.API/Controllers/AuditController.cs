@@ -10,7 +10,7 @@ namespace OTA.API.Controllers
 {
     /// <summary>
     /// Audit log query and export endpoints. All operations require the CanViewAudit policy.
-    /// SuperAdmin, PlatformAdmin, and Auditor roles are granted this policy by default.
+    /// SuperAdmin, PlatformAdmin, ReleaseManager, and QA roles are granted this policy by default.
     /// </summary>
     [ApiController]
     [Route("api/audit")]

@@ -37,6 +37,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# ── Firebase service account keys (never commit private keys) ────────────────
+*service-account*.json
+firebase-*.json
+
 # ── General ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

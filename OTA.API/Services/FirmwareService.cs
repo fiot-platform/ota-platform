@@ -5,9 +5,11 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OTA.API.Models.DTOs;
 using OTA.API.Models.Entities;
 using OTA.API.Models.Enums;
+using OTA.API.Models.Settings;
 using OTA.API.Repositories.Interfaces;
 using OTA.API.Services.Interfaces;
 
@@ -22,8 +24,12 @@ namespace OTA.API.Services
     {
         private readonly IFirmwareRepository _firmwareRepository;
         private readonly IRepositoryMasterRepository _repoRepository;
+        private readonly IProjectRepository _projectRepository;
+        private readonly IQASessionRepository _qaSessionRepository;
         private readonly IGiteaApiService _giteaApiService;
+        private readonly GiteaSettings _giteaSettings;
         private readonly IAuditService _auditService;
+        private readonly INotificationService _notificationService;
         private readonly ILogger<FirmwareService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -37,21 +43,30 @@ namespace OTA.API.Services
         public FirmwareService(
             IFirmwareRepository firmwareRepository,
             IRepositoryMasterRepository repoRepository,
+            IProjectRepository projectRepository,
+            IQASessionRepository qaSessionRepository,
             IGiteaApiService giteaApiService,
+            IOptions<GiteaSettings> giteaSettings,
             IAuditService auditService,
+            INotificationService notificationService,
             ILogger<FirmwareService> logger)
         {
-            _firmwareRepository = firmwareRepository ?? throw new ArgumentNullException(nameof(firmwareRepository));
-            _repoRepository = repoRepository ?? throw new ArgumentNullException(nameof(repoRepository));
-            _giteaApiService = giteaApiService ?? throw new ArgumentNullException(nameof(giteaApiService));
-            _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _firmwareRepository  = firmwareRepository  ?? throw new ArgumentNullException(nameof(firmwareRepository));
+            _repoRepository      = repoRepository      ?? throw new ArgumentNullException(nameof(repoRepository));
+            _projectRepository   = projectRepository   ?? throw new ArgumentNullException(nameof(projectRepository));
+            _qaSessionRepository = qaSessionRepository ?? throw new ArgumentNullException(nameof(qaSessionRepository));
+            _giteaApiService     = giteaApiService     ?? throw new ArgumentNullException(nameof(giteaApiService));
+            _giteaSettings       = giteaSettings?.Value ?? throw new ArgumentNullException(nameof(giteaSettings));
+            _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc/>
         public async Task<FirmwareDto> CreateFirmwareAsync(
             CreateFirmwareRequest request,
             string callerUserId,
+            string callerName,
             string callerEmail,
             string ipAddress,
             CancellationToken cancellationToken = default)
@@ -84,11 +99,71 @@ namespace OTA.API.Services
                 MinRequiredVersion = request.MinRequiredVersion,
                 MaxAllowedVersion = request.MaxAllowedVersion,
                 CreatedByUserId = callerUserId,
+                CreatedByName = !string.IsNullOrWhiteSpace(callerName) ? callerName : callerEmail,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
 
             await _firmwareRepository.InsertAsync(entity, cancellationToken);
+
+            // ── Commit firmware binary and folder scaffold to Gitea ─────────────
+            if (!string.IsNullOrWhiteSpace(request.StoredFileName))
+            {
+                try
+                {
+                    var uploadDir = Path.Combine(Directory.GetCurrentDirectory(), "firmware-uploads");
+                    var localPath = Path.Combine(uploadDir, request.StoredFileName);
+
+                    if (File.Exists(localPath))
+                    {
+                        var fileBytes = await File.ReadAllBytesAsync(localPath, cancellationToken);
+                        var version   = entity.Version.Trim();
+                        var fileName  = !string.IsNullOrWhiteSpace(request.FileName) ? request.FileName : request.StoredFileName;
+                        var branch    = !string.IsNullOrWhiteSpace(repo.DefaultBranch) ? repo.DefaultBranch : "main";
+
+                        // Push the firmware binary into a version-named folder
+                        await _giteaApiService.CreateFileAsync(
+                            repo.GiteaOwner, repo.GiteaRepoName,
+                            $"{version}/{fileName}",
+                            $"Add firmware binary for version {version}",
+                            fileBytes, branch, cancellationToken);
+
+                        // Scaffold sub-folders with .gitkeep placeholders
+                        var gitkeepBytes = Array.Empty<byte>();
+                        foreach (var folder in new[] { "test-case", "test-result", "buglist", "individual" })
+                        {
+                            await _giteaApiService.CreateFileAsync(
+                                repo.GiteaOwner, repo.GiteaRepoName,
+                                $"{version}/{folder}/.gitkeep",
+                                $"Scaffold {folder} folder for version {version}",
+                                gitkeepBytes, branch, cancellationToken);
+                        }
+
+                        // Build the Gitea raw-file URL and update the entity's DownloadUrl
+                        var giteaBase = _giteaSettings.BaseUrl.TrimEnd('/');
+                        var rawUrl = $"{giteaBase}/{Uri.EscapeDataString(repo.GiteaOwner)}/{Uri.EscapeDataString(repo.GiteaRepoName)}/raw/branch/{Uri.EscapeDataString(branch)}/{Uri.EscapeDataString(version)}/{Uri.EscapeDataString(fileName!)}";
+                        entity.DownloadUrl = rawUrl;
+                        await _firmwareRepository.UpdateAsync(entity.Id, entity, cancellationToken);
+
+                        _logger.LogInformation(
+                            "Committed firmware '{Version}' and folder scaffold to Gitea repo '{Owner}/{Repo}'. DownloadUrl={Url}",
+                            version, repo.GiteaOwner, repo.GiteaRepoName, rawUrl);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Stored file '{StoredFileName}' not found on disk; Gitea commit skipped.",
+                            request.StoredFileName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Non-fatal: firmware record is already persisted; Gitea failure is logged only.
+                    _logger.LogError(ex,
+                        "Failed to commit firmware '{Version}' to Gitea; firmware record was still created.",
+                        entity.Version);
+                }
+            }
 
             _logger.LogInformation("Firmware '{Version}' created in repository '{RepoId}' by '{Email}'.",
                 entity.Version, entity.RepositoryId, callerEmail);
@@ -101,6 +176,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { entity.Id, entity.Version, entity.Status }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Firmware Created",
+                $"Firmware version '{entity.Version}' was created in repository '{repo.GiteaRepoName}'.",
+                new Dictionary<string, string> { ["type"] = "firmware_created", ["firmwareId"] = entity.FirmwareId, ["version"] = entity.Version },
+                cancellationToken: CancellationToken.None);
 
             return MapToDto(entity, repo.GiteaRepoName);
         }
@@ -144,6 +225,12 @@ namespace OTA.API.Services
                 ipAddress,
                 cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "Firmware Updated",
+                $"Firmware version '{entity.Version}' was updated.",
+                new Dictionary<string, string> { ["type"] = "firmware_updated", ["firmwareId"] = entity.FirmwareId, ["version"] = entity.Version },
+                cancellationToken: CancellationToken.None);
+
             return MapToDto(entity);
         }
 
@@ -181,6 +268,8 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Status = entity.Status.ToString(), Notes = notes }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyFirmwareApprovedAsync(entity.FirmwareId, entity.Version, CancellationToken.None);
 
             return MapToDto(entity);
         }
@@ -223,6 +312,8 @@ namespace OTA.API.Services
                 ipAddress,
                 cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyFirmwareRejectedAsync(entity.FirmwareId, entity.Version, reason, CancellationToken.None);
+
             return MapToDto(entity);
         }
 
@@ -262,6 +353,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Status = entity.Status.ToString(), Remarks = remarks }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Firmware QA Verified",
+                $"Firmware '{entity.Version}' passed QA verification and is pending approval.",
+                new Dictionary<string, string> { ["type"] = "firmware_qa_verified", ["firmwareId"] = entity.FirmwareId, ["version"] = entity.Version },
+                cancellationToken: CancellationToken.None);
 
             return MapToDto(entity);
         }
@@ -311,7 +408,14 @@ namespace OTA.API.Services
                 repoName = repo?.GiteaRepoName;
             }
 
-            return MapToDto(entity, repoName);
+            string? projectName = null;
+            if (!string.IsNullOrWhiteSpace(entity.ProjectId) && MongoDB.Bson.ObjectId.TryParse(entity.ProjectId, out _))
+            {
+                var project = await _projectRepository.GetByIdAsync(entity.ProjectId, cancellationToken);
+                projectName = project?.Name;
+            }
+
+            return MapToDto(entity, repoName, projectName);
         }
 
         /// <inheritdoc/>
@@ -323,27 +427,50 @@ namespace OTA.API.Services
             string? repositoryId,
             int page,
             int pageSize,
+            List<string>? allowedProjectIds = null,
             CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
 
             var (items, totalCount) = await _firmwareRepository.SearchWithFiltersAsync(
-                search, status, channel, projectId, repositoryId, page, pageSize, cancellationToken);
+                search, status, channel, projectId, repositoryId, page, pageSize, allowedProjectIds, cancellationToken);
 
             // Batch-load repository names to avoid N+1 queries
-            var repoIds = items.Select(f => f.RepositoryId).Distinct().ToList();
+            var repoIds = items.Select(f => f.RepositoryId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
             var repoNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var rid in repoIds)
             {
-                if (string.IsNullOrWhiteSpace(rid)) continue;
                 var repo = await _repoRepository.GetByIdAsync(rid, cancellationToken);
                 if (repo != null) repoNames[rid] = repo.GiteaRepoName;
             }
 
+            // Batch-load project names to avoid N+1 queries
+            var projectIds = items.Select(f => f.ProjectId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+            var projectNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pid in projectIds)
+            {
+                if (!MongoDB.Bson.ObjectId.TryParse(pid, out _)) continue;
+                var project = await _projectRepository.GetByIdAsync(pid, cancellationToken);
+                if (project != null) projectNames[pid] = project.Name;
+            }
+
+            // Batch-load QA session statuses for all firmware IDs on this page
+            var firmwareIds = items.Select(f => f.FirmwareId).Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
+            var qaStatuses = await _qaSessionRepository.GetStatusByFirmwareIdsAsync(firmwareIds, cancellationToken);
+
             return new PagedResult<FirmwareDto>
             {
-                Items = items.Select(e => MapToDto(e, repoNames.GetValueOrDefault(e.RepositoryId))).ToList(),
+                Items = items.Select(e =>
+                {
+                    var dto = MapToDto(
+                        e,
+                        repoNames.GetValueOrDefault(e.RepositoryId),
+                        projectNames.GetValueOrDefault(e.ProjectId));
+                    if (qaStatuses.TryGetValue(e.FirmwareId, out var qaStatus))
+                        dto.QaSessionStatus = qaStatus;
+                    return dto;
+                }).ToList(),
                 TotalCount = totalCount,
                 Page = page,
                 PageSize = pageSize
@@ -398,6 +525,43 @@ namespace OTA.API.Services
         }
 
         /// <inheritdoc/>
+        public async Task DeleteFirmwareAsync(
+            string firmwareId,
+            string callerUserId,
+            string callerEmail,
+            string ipAddress,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(firmwareId)) throw new ArgumentException("FirmwareId is required.", nameof(firmwareId));
+
+            var entity = await _firmwareRepository.GetByFirmwareIdAsync(firmwareId, cancellationToken)
+                ?? await _firmwareRepository.GetByIdAsync(firmwareId, cancellationToken)
+                ?? throw new KeyNotFoundException($"Firmware '{firmwareId}' not found.");
+
+            if (entity.Status == FirmwareStatus.Approved)
+                throw new InvalidOperationException("Approved firmware cannot be deleted. Deprecate it first.");
+
+            await _firmwareRepository.DeleteAsync(entity.Id, cancellationToken);
+
+            _logger.LogInformation("Firmware '{FirmwareId}' permanently deleted by '{Email}'.", firmwareId, callerEmail);
+
+            await _auditService.LogActionAsync(
+                AuditAction.FirmwareDeleted,
+                callerUserId, callerEmail, UserRole.SuperAdmin,
+                "Firmware", firmwareId,
+                JsonSerializer.Serialize(new { entity.Version, entity.Status }, _jsonOptions),
+                null,
+                ipAddress,
+                cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Firmware Deleted",
+                $"Firmware version '{entity.Version}' was permanently deleted.",
+                new Dictionary<string, string> { ["type"] = "firmware_deleted", ["firmwareId"] = firmwareId, ["version"] = entity.Version },
+                cancellationToken: CancellationToken.None);
+        }
+
+        /// <inheritdoc/>
         public async Task DeprecateFirmwareAsync(
             string firmwareId,
             string callerUserId,
@@ -426,6 +590,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Status = FirmwareStatus.Deprecated.ToString() }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Firmware Deprecated",
+                $"Firmware version '{entity.Version}' was deprecated.",
+                new Dictionary<string, string> { ["type"] = "firmware_deprecated", ["firmwareId"] = entity.FirmwareId, ["version"] = entity.Version },
+                cancellationToken: CancellationToken.None);
         }
 
         // ── Private helpers ─────────────────────────────────────────────────────────
@@ -443,12 +613,13 @@ namespace OTA.API.Services
             }
         }
 
-        private static FirmwareDto MapToDto(FirmwareVersionEntity e, string? repositoryName = null) => new FirmwareDto
+        private static FirmwareDto MapToDto(FirmwareVersionEntity e, string? repositoryName = null, string? projectName = null) => new FirmwareDto
         {
             FirmwareId = e.FirmwareId,
             RepositoryId = e.RepositoryId,
             RepositoryName = repositoryName,
             ProjectId = e.ProjectId,
+            ProjectName = projectName,
             Version = e.Version,
             GiteaReleaseId = e.GiteaReleaseId,
             GiteaTagName = e.GiteaTagName,
@@ -476,6 +647,7 @@ namespace OTA.API.Services
             CreatedAt = e.CreatedAt,
             UpdatedAt = e.UpdatedAt,
             CreatedByUserId = e.CreatedByUserId,
+            CreatedByName = e.CreatedByName,
             GiteaAssets = e.GiteaAssets.Select(a => new GiteaAssetItemDto
             {
                 AssetId = a.AssetId,

@@ -82,7 +82,7 @@ namespace OTA.API.Services.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged result containing rollout DTOs and total count.</returns>
-        Task<PagedResult<RolloutDto>> GetRolloutsAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<PagedResult<RolloutDto>> GetRolloutsAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Retrieves all OTA jobs belonging to the specified rollout.

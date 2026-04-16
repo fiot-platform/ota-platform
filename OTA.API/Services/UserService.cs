@@ -22,6 +22,7 @@ namespace OTA.API.Services
         private readonly IUserRepository _userRepository;
         private readonly IAuthService _authService;
         private readonly IAuditService _auditService;
+        private readonly INotificationService _notificationService;
         private readonly ILogger<UserService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -37,12 +38,14 @@ namespace OTA.API.Services
             IUserRepository userRepository,
             IAuthService authService,
             IAuditService auditService,
+            INotificationService notificationService,
             ILogger<UserService> logger)
         {
-            _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
-            _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _userRepository      = userRepository      ?? throw new ArgumentNullException(nameof(userRepository));
+            _authService         = authService         ?? throw new ArgumentNullException(nameof(authService));
+            _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc/>
@@ -79,12 +82,13 @@ namespace OTA.API.Services
 
             var user = new UserEntity
             {
+                UserId = Guid.NewGuid().ToString(),
                 Name = request.Name.Trim(),
                 Email = normalizedEmail,
                 PasswordHash = _authService.HashPassword(request.Password),
                 Role = request.Role,
-                CustomerId = request.CustomerId,
-                IsActive = true,
+                CustomerId = string.IsNullOrWhiteSpace(request.CustomerId) ? null : request.CustomerId.Trim(),
+                IsActive = request.IsActive,
                 ProjectScope = request.ProjectScope ?? new List<string>(),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -102,6 +106,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { user.Id, user.Email, user.Role, user.CustomerId }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "User Created",
+                $"New user {user.Email} ({user.Role}) was created.",
+                new Dictionary<string, string> { ["type"] = "user_created", ["userId"] = user.UserId, ["email"] = user.Email },
+                cancellationToken: CancellationToken.None);
 
             return MapToDto(user);
         }
@@ -121,10 +131,22 @@ namespace OTA.API.Services
             var user = await _userRepository.GetByIdAsync(userId, cancellationToken)
                 ?? throw new KeyNotFoundException($"User '{userId}' not found.");
 
-            var oldSnapshot = JsonSerializer.Serialize(new { user.Name }, _jsonOptions);
+            var oldSnapshot = JsonSerializer.Serialize(new { user.Name, user.ProjectScope }, _jsonOptions);
 
             if (!string.IsNullOrWhiteSpace(request.Name))
                 user.Name = request.Name.Trim();
+
+            if (!string.IsNullOrWhiteSpace(request.Email))
+                user.Email = request.Email.Trim().ToLowerInvariant();
+
+            if (request.ProjectScope != null)
+                user.ProjectScope = request.ProjectScope;
+
+            if (request.IsActive.HasValue)
+                user.IsActive = request.IsActive.Value;
+
+            if (!string.IsNullOrWhiteSpace(request.CustomerId))
+                user.CustomerId = request.CustomerId.Trim();
 
             user.UpdatedAt = DateTime.UtcNow;
 
@@ -137,11 +159,53 @@ namespace OTA.API.Services
                 callerUserId, callerEmail, UserRole.SuperAdmin,
                 "User", userId,
                 oldSnapshot,
-                JsonSerializer.Serialize(new { user.Name }, _jsonOptions),
+                JsonSerializer.Serialize(new { user.Name, user.ProjectScope }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "User Updated",
+                $"User {user.Email} was updated.",
+                new Dictionary<string, string> { ["type"] = "user_updated", ["userId"] = userId, ["email"] = user.Email },
+                cancellationToken: CancellationToken.None);
+
             return MapToDto(user);
+        }
+
+        /// <inheritdoc/>
+        public async Task DeleteUserAsync(
+            string userId,
+            string callerUserId,
+            string callerEmail,
+            string ipAddress,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId is required.", nameof(userId));
+
+            var user = await _userRepository.GetByIdAsync(userId, cancellationToken)
+                ?? throw new KeyNotFoundException($"User '{userId}' not found.");
+
+            if (userId == callerUserId)
+                throw new InvalidOperationException("You cannot delete your own account.");
+
+            await _userRepository.DeleteAsync(userId, cancellationToken);
+
+            _logger.LogInformation("User '{UserId}' permanently deleted by '{CallerEmail}'.", userId, callerEmail);
+
+            await _auditService.LogActionAsync(
+                AuditAction.UserDeleted,
+                callerUserId, callerEmail, UserRole.SuperAdmin,
+                "User", userId,
+                JsonSerializer.Serialize(new { user.Email, user.Role }, _jsonOptions),
+                null,
+                ipAddress,
+                cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "User Deleted",
+                $"User {user.Email} ({user.Role}) was permanently deleted.",
+                new Dictionary<string, string> { ["type"] = "user_deleted", ["userId"] = userId, ["email"] = user.Email },
+                cancellationToken: CancellationToken.None);
         }
 
         /// <inheritdoc/>
@@ -172,6 +236,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { IsActive = false }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "User Deactivated",
+                $"User {user.Email} was deactivated.",
+                new Dictionary<string, string> { ["type"] = "user_deactivated", ["userId"] = userId, ["email"] = user.Email },
+                cancellationToken: CancellationToken.None);
         }
 
         /// <inheritdoc/>
@@ -204,6 +274,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { IsActive = true }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "User Activated",
+                $"User {user.Email} was activated.",
+                new Dictionary<string, string> { ["type"] = "user_activated", ["userId"] = userId, ["email"] = user.Email },
+                cancellationToken: CancellationToken.None);
         }
 
         /// <inheritdoc/>
@@ -271,6 +347,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Role = newRole.ToString() }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "User Role Changed",
+                $"User {user.Email} role changed from {oldRole} to {newRole}.",
+                new Dictionary<string, string> { ["type"] = "user_role_changed", ["userId"] = userId, ["oldRole"] = oldRole.ToString(), ["newRole"] = newRole.ToString() },
+                cancellationToken: CancellationToken.None);
         }
 
         /// <inheritdoc/>
@@ -284,8 +366,8 @@ namespace OTA.API.Services
             if (request == null) throw new ArgumentNullException(nameof(request));
             if (string.IsNullOrWhiteSpace(request.CurrentPassword)) throw new ArgumentException("CurrentPassword is required.");
             if (string.IsNullOrWhiteSpace(request.NewPassword)) throw new ArgumentException("NewPassword is required.");
-            if (request.NewPassword.Length < 8)
-                throw new ArgumentException("New password must be at least 8 characters long.");
+            if (request.NewPassword.Length < 6)
+                throw new ArgumentException("New password must be at least 6 characters long.");
 
             var user = await _userRepository.GetByIdAsync(userId, cancellationToken)
                 ?? throw new KeyNotFoundException($"User '{userId}' not found.");
@@ -314,6 +396,45 @@ namespace OTA.API.Services
             return users.Select(MapToDto).ToList();
         }
 
+        /// <inheritdoc/>
+        public async Task<UserDto> AssignProjectsAsync(
+            string userId,
+            List<string> projectIds,
+            string callerUserId,
+            string callerEmail,
+            UserRole callerRole,
+            string ipAddress,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId is required.", nameof(userId));
+            if (projectIds == null) throw new ArgumentNullException(nameof(projectIds));
+
+            var user = await _userRepository.GetByIdAsync(userId, cancellationToken)
+                ?? throw new KeyNotFoundException($"User '{userId}' not found.");
+
+            var oldScope = JsonSerializer.Serialize(user.ProjectScope, _jsonOptions);
+
+            user.ProjectScope = projectIds.Distinct().ToList();
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _userRepository.UpdateAsync(userId, user, cancellationToken);
+
+            _logger.LogInformation(
+                "Project scope of user '{UserId}' updated to [{Projects}] by '{CallerEmail}'.",
+                userId, string.Join(", ", user.ProjectScope), callerEmail);
+
+            await _auditService.LogActionAsync(
+                AuditAction.UserUpdated,
+                callerUserId, callerEmail, callerRole,
+                "User", userId,
+                oldScope,
+                JsonSerializer.Serialize(user.ProjectScope, _jsonOptions),
+                ipAddress,
+                cancellationToken: cancellationToken);
+
+            return MapToDto(user);
+        }
+
         // ── Private mapper ──────────────────────────────────────────────────────────
 
         private static UserDto MapToDto(UserEntity u) => new UserDto
@@ -327,7 +448,8 @@ namespace OTA.API.Services
             IsActive = u.IsActive,
             ProjectScope = u.ProjectScope,
             CreatedAt = u.CreatedAt,
-            UpdatedAt = u.UpdatedAt
+            UpdatedAt = u.UpdatedAt,
+            LastLoginAt = u.LastLoginAt
         };
     }
 }

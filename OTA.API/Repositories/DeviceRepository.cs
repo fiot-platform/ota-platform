@@ -119,7 +119,7 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<List<DeviceEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default)
+        public async Task<List<DeviceEntity>> SearchAsync(string filter, int page, int pageSize, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
@@ -130,9 +130,7 @@ namespace OTA.API.Repositories
                 FilterDefinition<DeviceEntity> mongoFilter;
 
                 if (string.IsNullOrWhiteSpace(filter))
-                {
                     mongoFilter = Builders<DeviceEntity>.Filter.Empty;
-                }
                 else
                 {
                     var regex = new MongoDB.Bson.BsonRegularExpression(filter, "i");
@@ -143,6 +141,12 @@ namespace OTA.API.Repositories
                         Builders<DeviceEntity>.Filter.Regex(d => d.CustomerId, regex)
                     );
                 }
+
+                if (!string.IsNullOrWhiteSpace(projectId))
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId);
+
+                if (allowedProjectIds != null)
+                    mongoFilter &= Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds);
 
                 return await Collection.Find(mongoFilter)
                     .SortBy(d => d.SerialNumber)
@@ -157,16 +161,14 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<long> CountAsync(string filter, CancellationToken cancellationToken = default)
+        public async Task<long> CountAsync(string filter, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             try
             {
                 FilterDefinition<DeviceEntity> mongoFilter;
 
                 if (string.IsNullOrWhiteSpace(filter))
-                {
                     mongoFilter = Builders<DeviceEntity>.Filter.Empty;
-                }
                 else
                 {
                     var regex = new MongoDB.Bson.BsonRegularExpression(filter, "i");
@@ -177,6 +179,12 @@ namespace OTA.API.Repositories
                         Builders<DeviceEntity>.Filter.Regex(d => d.CustomerId, regex)
                     );
                 }
+
+                if (!string.IsNullOrWhiteSpace(projectId))
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId);
+
+                if (allowedProjectIds != null)
+                    mongoFilter &= Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds);
 
                 return await Collection.CountDocumentsAsync(mongoFilter, null, cancellationToken);
             }
@@ -196,7 +204,7 @@ namespace OTA.API.Repositories
             {
                 var filter = Builders<DeviceEntity>.Filter.Eq("_id", ObjectId.Parse(deviceId));
                 var update = Builders<DeviceEntity>.Update
-                    .Set(d => d.LastSeen, lastSeen)
+                    .Set(d => d.LastHeartbeatAt, lastSeen)
                     .Set(d => d.UpdatedAt, DateTime.UtcNow);
 
                 var result = await Collection.UpdateOneAsync(filter, update, null, cancellationToken);
@@ -239,6 +247,30 @@ namespace OTA.API.Repositories
             catch (Exception ex)
             {
                 throw new InvalidOperationException($"Failed to update firmware version for device '{deviceId}'.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task UpdateOtaProgressAsync(string deviceId, string otaStatus, int otaProgress, string? otaTargetVersion, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+                throw new ArgumentException("DeviceId must not be null or empty.", nameof(deviceId));
+
+            try
+            {
+                var filter = Builders<DeviceEntity>.Filter.Eq("_id", ObjectId.Parse(deviceId));
+                var update = Builders<DeviceEntity>.Update
+                    .Set(d => d.OtaStatus, otaStatus)
+                    .Set(d => d.OtaProgress, otaProgress)
+                    .Set(d => d.OtaTargetVersion, otaTargetVersion)
+                    .Set(d => d.OtaUpdatedAt, DateTime.UtcNow)
+                    .Set(d => d.UpdatedAt, DateTime.UtcNow);
+
+                await Collection.UpdateOneAsync(filter, update, null, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to update OTA progress for device '{deviceId}'.", ex);
             }
         }
     }

@@ -73,6 +73,7 @@ namespace OTA.API.Models.DTOs
         public List<QAEventLogItemDto> EventLog { get; set; } = new();
         public DateTime? StartedAt { get; set; }
         public string? StartedByUserId { get; set; }
+        public string? StartedByName { get; set; }
         public DateTime? CompletedAt { get; set; }
         public string? Remarks { get; set; }
         public DateTime CreatedAt { get; set; }

@@ -57,7 +57,7 @@ namespace OTA.API.Services.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>List of repository DTOs.</returns>
-        Task<List<RepositoryDto>> GetRepositoriesAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default);
+        Task<List<RepositoryDto>> GetRepositoriesAsync(string filter, int page, int pageSize, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Retrieves all repositories associated with the given project.
@@ -66,6 +66,11 @@ namespace OTA.API.Services.Interfaces
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>List of repository DTOs for the project.</returns>
         Task<List<RepositoryDto>> GetByProjectIdAsync(string projectId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Permanently deletes a repository registration. SuperAdmin only.
+        /// </summary>
+        Task DeleteRepositoryAsync(string repositoryId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Deactivates a repository preventing further webhook processing and firmware syncs.

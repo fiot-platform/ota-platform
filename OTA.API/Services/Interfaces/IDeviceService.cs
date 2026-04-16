@@ -72,7 +72,7 @@ namespace OTA.API.Services.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged result containing device DTOs and total count.</returns>
-        Task<PagedResult<DeviceDto>> GetDevicesAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<PagedResult<DeviceDto>> GetDevicesAsync(string filter, int page, int pageSize, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Suspends a device preventing it from receiving further OTA updates until reactivated.
@@ -93,5 +93,47 @@ namespace OTA.API.Services.Interfaces
         /// <param name="ipAddress">The caller's IP address for audit context.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         Task DecommissionDeviceAsync(string deviceId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Registers multiple devices in a single call. Processes each row independently;
+        /// failures are collected and returned without aborting the remaining rows.
+        /// </summary>
+        Task<BulkRegisterResult> BulkRegisterDevicesAsync(BulkRegisterDeviceRequest request, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Reactivates a previously suspended device, making it eligible for OTA updates again.
+        /// </summary>
+        /// <param name="deviceId">The identifier of the device to activate.</param>
+        /// <param name="callerUserId">The identifier of the authenticated caller.</param>
+        /// <param name="callerEmail">The email of the authenticated caller for audit logging.</param>
+        /// <param name="ipAddress">The caller's IP address for audit context.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task ActivateDeviceAsync(string deviceId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns the list of approved firmware versions compatible with a device's model.
+        /// </summary>
+        Task<List<AvailableFirmwareDto>> GetAvailableFirmwareAsync(string deviceId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Creates a direct OTA job targeting a single device with a specified firmware version.
+        /// </summary>
+        Task<string> PushFirmwareToDeviceAsync(string deviceId, string firmwareVersionId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves the paginated OTA update history for a device.
+        /// </summary>
+        /// <param name="deviceId">The device identifier (MongoDB ObjectId).</param>
+        /// <param name="page">One-based page number.</param>
+        /// <param name="pageSize">Number of results per page.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Paged result of OTA history items.</returns>
+        Task<PagedResult<DeviceOtaHistoryItemDto>> GetDeviceOtaHistoryAsync(string deviceId, int page, int pageSize, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns all OTA-ready devices (Active status) without requiring authentication.
+        /// Intended for public/device-facing consumption.
+        /// </summary>
+        Task<List<OtaReadyDeviceDto>> GetOtaReadyDevicesAsync(CancellationToken cancellationToken = default);
     }
 }

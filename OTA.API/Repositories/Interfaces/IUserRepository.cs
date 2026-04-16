@@ -84,5 +84,31 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>The matching user entity, or null if not found.</returns>
         Task<UserEntity?> FindByRefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default);
+
+        // ── FCM token management ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Adds or refreshes an FCM registration token entry for the specified user.
+        /// If a token with the same value already exists, its label and timestamp are updated.
+        /// </summary>
+        Task AddOrUpdateFcmTokenAsync(string userId, string token, string? deviceLabel, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Removes the specified FCM token from the user's token list.
+        /// No-op if the token is not found.
+        /// </summary>
+        Task RemoveFcmTokenAsync(string userId, string token, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Removes the specified FCM token from every user record that contains it.
+        /// Used when FCM reports a token as invalid or unregistered.
+        /// </summary>
+        Task RemoveFcmTokenGloballyAsync(string token, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves all users whose role is in the provided set.
+        /// Used by the notification service to find recipients for broadcast messages.
+        /// </summary>
+        Task<List<UserEntity>> GetByRolesAsync(IEnumerable<UserRole> roles, CancellationToken cancellationToken = default);
     }
 }

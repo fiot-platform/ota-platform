@@ -264,5 +264,99 @@ namespace OTA.API.Repositories
                 throw new InvalidOperationException($"Failed to deactivate user '{userId}'.", ex);
             }
         }
+
+        // ── FCM token management ──────────────────────────────────────────────
+
+        /// <inheritdoc/>
+        public async Task AddOrUpdateFcmTokenAsync(string userId, string token, string? deviceLabel, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId is required.", nameof(userId));
+            if (string.IsNullOrWhiteSpace(token))  throw new ArgumentException("Token is required.",  nameof(token));
+
+            try
+            {
+                var userFilter = Builders<UserEntity>.Filter.Eq(u => u.UserId, userId);
+
+                // Pull any existing entry for this token, then push the refreshed entry.
+                var pull = Builders<UserEntity>.Update
+                    .PullFilter(u => u.FcmTokens, t => t.Token == token);
+                await Collection.UpdateOneAsync(userFilter, pull, null, cancellationToken);
+
+                var entry = new OTA.API.Models.Entities.FcmTokenEntry
+                {
+                    Token       = token,
+                    DeviceLabel = deviceLabel,
+                    RegisteredAt = DateTime.UtcNow
+                };
+
+                var push = Builders<UserEntity>.Update
+                    .Push(u => u.FcmTokens, entry)
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow);
+
+                await Collection.UpdateOneAsync(userFilter, push, null, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to add FCM token for user '{userId}'.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task RemoveFcmTokenAsync(string userId, string token, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId is required.", nameof(userId));
+            if (string.IsNullOrWhiteSpace(token))  throw new ArgumentException("Token is required.",  nameof(token));
+
+            try
+            {
+                var filter = Builders<UserEntity>.Filter.Eq(u => u.UserId, userId);
+                var update = Builders<UserEntity>.Update
+                    .PullFilter(u => u.FcmTokens, t => t.Token == token)
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow);
+
+                await Collection.UpdateOneAsync(filter, update, null, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to remove FCM token for user '{userId}'.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task RemoveFcmTokenGloballyAsync(string token, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(token)) throw new ArgumentException("Token is required.", nameof(token));
+
+            try
+            {
+                var filter = Builders<UserEntity>.Filter.ElemMatch(u => u.FcmTokens, t => t.Token == token);
+                var update = Builders<UserEntity>.Update
+                    .PullFilter(u => u.FcmTokens, t => t.Token == token)
+                    .Set(u => u.UpdatedAt, DateTime.UtcNow);
+
+                await Collection.UpdateManyAsync(filter, update, null, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to globally remove FCM token.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<UserEntity>> GetByRolesAsync(IEnumerable<UserRole> roles, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var roleList = roles?.ToList() ?? new List<UserRole>();
+                if (!roleList.Any()) return new List<UserEntity>();
+
+                var filter = Builders<UserEntity>.Filter.In(u => u.Role, roleList);
+                return await Collection.Find(filter).ToListAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Failed to retrieve users by roles.", ex);
+            }
+        }
     }
 }

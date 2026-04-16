@@ -2,8 +2,9 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, RefreshCw, Power, PowerOff, Shield } from 'lucide-react'
+import { Plus, Search, RefreshCw, Power, PowerOff, FolderKanban, Trash2, Eye, CheckCircle2, Circle } from 'lucide-react'
 import { userService } from '@/services/user.service'
+import { projectService } from '@/services/project.service'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { DataTable, Column } from '@/components/ui/DataTable'
 import { StatusBadge, RoleBadge } from '@/components/ui/Badge'
@@ -11,7 +12,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { CreateUserForm } from '@/components/forms/CreateUserForm'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { useToast } from '@/components/ui/ToastProvider'
-import { User, UserRole, CreateUserRequest } from '@/types'
+import Link from 'next/link'
+import { User, UserRole, CreateUserRequest, Project } from '@/types'
 import { formatDate, formatRelativeTime } from '@/utils/formatters'
 
 export default function UsersPage() {
@@ -26,6 +28,9 @@ export default function UsersPage() {
   const [createOpen, setCreateOpen] = React.useState(false)
   const [deactivateTarget, setDeactivateTarget] = React.useState<User | null>(null)
   const [activateTarget, setActivateTarget] = React.useState<User | null>(null)
+  const [assignProjectsTarget, setAssignProjectsTarget] = React.useState<User | null>(null)
+  const [selectedProjectIds, setSelectedProjectIds] = React.useState<string[]>([])
+  const [confirmDelete, setConfirmDelete] = React.useState<User | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['users', { search, role: roleFilter, isActive: statusFilter, page, pageSize }],
@@ -45,7 +50,7 @@ export default function UsersPage() {
       toast({ title: 'User created successfully', variant: 'success' })
       setCreateOpen(false)
     },
-    onError: () => toast({ title: 'Failed to create user', variant: 'error' }),
+    onError: (e: any) => toast({ title: 'Failed to create user', description: e?.response?.data?.message, variant: 'error' }),
   })
 
   const deactivateMutation = useMutation({
@@ -66,6 +71,34 @@ export default function UsersPage() {
       setActivateTarget(null)
     },
     onError: () => toast({ title: 'Failed to activate user', variant: 'error' }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => userService.deleteUser(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({ title: 'User deleted', variant: 'success' })
+      setConfirmDelete(null)
+    },
+    onError: (e: any) => toast({ title: 'Failed to delete user', description: e?.response?.data?.message, variant: 'error' }),
+  })
+
+  const assignProjectsMutation = useMutation({
+    mutationFn: ({ id, projectIds }: { id: string; projectIds: string[] }) =>
+      userService.assignProjects(id, projectIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({ title: 'Projects assigned successfully', variant: 'success' })
+      setAssignProjectsTarget(null)
+    },
+    onError: (e: any) =>
+      toast({ title: 'Failed to assign projects', description: e?.response?.data?.message, variant: 'error' }),
+  })
+
+  const { data: projectsData } = useQuery({
+    queryKey: ['projects-all'],
+    queryFn: () => projectService.getProjects({ pageSize: 200 }),
+    enabled: assignProjectsTarget !== null,
   })
 
   const columns: Column<User>[] = [
@@ -122,7 +155,24 @@ export default function UsersPage() {
       header: 'Actions',
       cell: (row) => (
         <div className="flex items-center gap-1">
+          <Link
+            href={`/users/${row.id}`}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-accent-600 hover:bg-accent-50 transition-colors"
+            title="View"
+          >
+            <Eye className="w-4 h-4" />
+          </Link>
           <RoleGuard module="Users" action="update">
+            <button
+              onClick={() => {
+                setAssignProjectsTarget(row)
+                setSelectedProjectIds(row.projectScope ?? [])
+              }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-accent-600 hover:bg-accent-50 transition-colors"
+              title="Assign Projects"
+            >
+              <FolderKanban className="w-4 h-4" />
+            </button>
             {row.isActive ? (
               <button
                 onClick={() => setDeactivateTarget(row)}
@@ -140,6 +190,15 @@ export default function UsersPage() {
                 <Power className="w-4 h-4" />
               </button>
             )}
+          </RoleGuard>
+          <RoleGuard module="Users" action="delete">
+            <button
+              onClick={() => setConfirmDelete(row)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </RoleGuard>
         </div>
       ),
@@ -250,6 +309,146 @@ export default function UsersPage() {
         onConfirm={() => activateTarget && activateMutation.mutate(activateTarget.id)}
         isLoading={activateMutation.isPending}
       />
+
+      {/* Delete Confirm */}
+      <ConfirmDialog
+        open={Boolean(confirmDelete)}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+        title="Delete User"
+        message={`Permanently delete "${confirmDelete?.name}" (${confirmDelete?.email})? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => confirmDelete && deleteMutation.mutate(confirmDelete.id)}
+        isLoading={deleteMutation.isPending}
+      />
+
+      {/* Assign Projects Dialog */}
+      {assignProjectsTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+
+            {/* Header */}
+            <div className="bg-white border-b border-slate-100 px-6 py-5">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-accent-50 border border-accent-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <FolderKanban className="w-5 h-5 text-accent-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-primary-900">Assign Projects</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Scoping access for <span className="font-semibold text-primary-800">{assignProjectsTarget.name}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Info banner */}
+              <div className="flex items-start gap-2.5 bg-accent-50 border border-accent-100 rounded-xl px-4 py-3">
+                <FolderKanban className="w-4 h-4 text-accent-500 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-accent-700 leading-relaxed">
+                  Select projects this user can access. Leaving all unchecked grants access to <span className="font-semibold">all projects</span>.
+                </p>
+              </div>
+
+              {/* Project list */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {(projectsData?.items ?? []).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <FolderKanban className="w-8 h-8 text-slate-300 mb-2" />
+                    <p className="text-sm text-slate-400">No projects available</p>
+                  </div>
+                ) : (
+                  (projectsData?.items ?? []).map((project: Project) => {
+                    const isChecked = selectedProjectIds.includes(project.id)
+                    return (
+                      <label
+                        key={project.id}
+                        className={`flex items-center gap-3 p-3.5 rounded-xl border cursor-pointer transition-all select-none ${
+                          isChecked
+                            ? 'bg-accent-50 border-accent-400 shadow-sm'
+                            : 'bg-white border-slate-200 hover:border-accent-200 hover:bg-accent-50/30'
+                        }`}
+                      >
+                        {/* Hidden native checkbox for accessibility */}
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            setSelectedProjectIds((prev) =>
+                              e.target.checked
+                                ? [...prev, project.id]
+                                : prev.filter((pid) => pid !== project.id)
+                            )
+                          }}
+                          className="sr-only"
+                        />
+
+                        {/* Custom checkbox icon */}
+                        <span className="flex-shrink-0">
+                          {isChecked
+                            ? <CheckCircle2 className="w-5 h-5 text-accent-600" />
+                            : <Circle className="w-5 h-5 text-slate-300" />
+                          }
+                        </span>
+
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-sm font-semibold truncate ${isChecked ? 'text-accent-800' : 'text-primary-800'}`}>
+                            {project.name}
+                          </p>
+                          {project.description && (
+                            <p className="text-xs text-slate-500 truncate mt-0.5">{project.description}</p>
+                          )}
+                        </div>
+
+                        {isChecked && (
+                          <span className="text-xs font-semibold bg-accent-500 text-white px-2.5 py-0.5 rounded-full flex-shrink-0">
+                            Selected
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                  selectedProjectIds.length > 0
+                    ? 'bg-accent-100 text-accent-700'
+                    : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {selectedProjectIds.length === 0
+                    ? 'No restriction (all projects)'
+                    : `${selectedProjectIds.length} project${selectedProjectIds.length !== 1 ? 's' : ''} selected`}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setAssignProjectsTarget(null)}
+                    className="btn-secondary"
+                    disabled={assignProjectsMutation.isPending}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() =>
+                      assignProjectsMutation.mutate({
+                        id: assignProjectsTarget.id,
+                        projectIds: selectedProjectIds,
+                      })
+                    }
+                    className="btn-primary"
+                    disabled={assignProjectsMutation.isPending}
+                  >
+                    {assignProjectsMutation.isPending ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

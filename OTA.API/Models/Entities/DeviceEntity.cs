@@ -83,6 +83,24 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         public string? PreviousFirmwareVersion { get; set; }
 
+        /// <summary>
+        /// MAC address, IMEI, or IP address used as the primary device identifier.
+        /// Stored in SerialNumber for uniqueness enforcement; also kept here for display.
+        /// </summary>
+        [BsonElement("macImeiIp")]
+        [BsonIgnoreIfNull]
+        public string? MacImeiIp { get; set; }
+
+        /// <summary>Identifier of the project this device belongs to.</summary>
+        [BsonElement("projectId")]
+        [BsonIgnoreIfNull]
+        public string? ProjectId { get; set; }
+
+        /// <summary>Name of the project this device belongs to.</summary>
+        [BsonElement("projectName")]
+        [BsonIgnoreIfNull]
+        public string? ProjectName { get; set; }
+
         /// <summary>Current operational status of the device.</summary>
         [BsonElement("status")]
         [BsonRepresentation(BsonType.String)]
@@ -104,10 +122,45 @@ namespace OTA.API.Models.Entities
         [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+        // ── OTA Progress (updated live via MQTT status packets) ───────────────
+
+        /// <summary>
+        /// Last OTA lifecycle status reported by the device via MQTT.
+        /// Values: "start" | "inprogress" | "success" | "failed" | "rollback"
+        /// Null when no OTA has been attempted or progress has been cleared.
+        /// </summary>
+        [BsonElement("otaStatus")]
+        [BsonIgnoreIfNull]
+        public string? OtaStatus { get; set; }
+
+        /// <summary>Download/install progress 0–100 reported by the device.</summary>
+        [BsonElement("otaProgress")]
+        [BsonIgnoreIfDefault]
+        public int OtaProgress { get; set; }
+
+        /// <summary>The firmware version the device is currently updating to.</summary>
+        [BsonElement("otaTargetVersion")]
+        [BsonIgnoreIfNull]
+        public string? OtaTargetVersion { get; set; }
+
+        /// <summary>UTC timestamp of the last OTA status packet received.</summary>
+        [BsonElement("otaUpdatedAt")]
+        [BsonIgnoreIfNull]
+        [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+        public DateTime? OtaUpdatedAt { get; set; }
+
         /// <summary>UserId of the platform user who registered this device.</summary>
         [BsonElement("registeredByUserId")]
         [BsonIgnoreIfNull]
         public string? RegisteredByUserId { get; set; }
+
+        /// <summary>
+        /// MQTT topic used to publish registration / update events for this device.
+        /// Defaults to OTA/{SerialNumber}/Status when not explicitly set.
+        /// </summary>
+        [BsonElement("publishTopic")]
+        [BsonIgnoreIfNull]
+        public string? PublishTopic { get; set; }
 
         /// <summary>
         /// Free-form tags for grouping and filtering (e.g., ["warehouse-zone-a", "high-priority"]).

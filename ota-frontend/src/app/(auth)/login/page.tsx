@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, Radio, Loader2 } from 'lucide-react'
+import Image from 'next/image'
+import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { authService } from '@/services/auth.service'
 import { useToast } from '@/components/ui/ToastProvider'
 import { isAuthenticated } from '@/lib/auth'
@@ -88,8 +89,14 @@ export default function LoginPage() {
         <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8 border border-white/20">
           {/* Logo & Title */}
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-accent-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-              <Radio className="w-9 h-9 text-white" />
+            <div className="flex justify-center mb-4">
+              <Image
+                src="/logo.png"
+                alt="OTA Rax Logo"
+                width={80}
+                height={80}
+                className="object-contain"
+              />
             </div>
             <h1 className="text-2xl font-bold text-primary-900">OTA Platform</h1>
             <p className="text-slate-500 text-sm mt-1">Sign in to your admin portal</p>

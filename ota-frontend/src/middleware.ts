@@ -8,9 +8,9 @@ const PUBLIC_ROUTES = ['/login', '/unauthorized', '/forgot-password', '/reset-pa
 
 const ROUTE_ROLE_MAP: Record<string, string[]> = {
   '/users': ['SuperAdmin', 'PlatformAdmin'],
-  '/audit-logs': ['SuperAdmin', 'PlatformAdmin', 'ReleaseManager', 'DevOpsEngineer', 'Auditor'],
-  '/webhook-events': ['SuperAdmin', 'PlatformAdmin', 'DevOpsEngineer'],
-  '/reports': ['SuperAdmin', 'PlatformAdmin', 'ReleaseManager', 'DevOpsEngineer', 'SupportEngineer', 'CustomerAdmin', 'Viewer', 'Auditor'],
+  '/audit-logs': ['SuperAdmin', 'PlatformAdmin', 'ReleaseManager'],
+  '/webhook-events': ['SuperAdmin', 'PlatformAdmin'],
+  '/reports': ['SuperAdmin', 'PlatformAdmin', 'ReleaseManager', 'CustomerAdmin', 'Viewer'],
 }
 
 function parseJwtPayload(token: string): { role?: string; exp?: number } | null {

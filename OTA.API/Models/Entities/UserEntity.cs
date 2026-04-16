@@ -62,7 +62,7 @@ namespace OTA.API.Models.Entities
         /// <summary>
         /// List of ProjectId values this user is explicitly scoped to.
         /// Empty list means the user has no project restrictions within their customer scope.
-        /// Only applicable when role is ReleaseManager, QA, DevOpsEngineer, SupportEngineer, or Viewer.
+        /// Only applicable when role is ReleaseManager, QA, or Viewer.
         /// </summary>
         [BsonElement("projectScope")]
         public List<string> ProjectScope { get; set; } = new();
@@ -123,5 +123,13 @@ namespace OTA.API.Models.Entities
         /// <summary>Optional phone number (not persisted unless added to schema).</summary>
         [BsonIgnore]
         public string? PhoneNumber { get; set; }
+
+        /// <summary>
+        /// Firebase Cloud Messaging registration tokens for this user's devices and browsers.
+        /// Each entry corresponds to one client app installation. Tokens are added on login
+        /// and removed on logout or when FCM reports them as invalid.
+        /// </summary>
+        [BsonElement("fcmTokens")]
+        public List<FcmTokenEntry> FcmTokens { get; set; } = new();
     }
 }

@@ -41,11 +41,12 @@ namespace OTA.API.Controllers
         [ProducesResponseType(typeof(ApiResponse<List<RolloutDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetRollouts(
             [FromQuery] string? filter = null,
+            [FromQuery] string? projectId = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 25,
             CancellationToken cancellationToken = default)
         {
-            var result = await _otaService.GetRolloutsAsync(filter ?? string.Empty, page, pageSize, cancellationToken);
+            var result = await _otaService.GetRolloutsAsync(filter ?? string.Empty, page, pageSize, projectId, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
             return Ok(ApiResponse<List<RolloutDto>>.Ok(result.Items, "Rollouts retrieved successfully.", pagination));
         }

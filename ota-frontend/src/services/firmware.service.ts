@@ -96,6 +96,10 @@ export const firmwareService = {
     return response.data.data
   },
 
+  async deleteFirmware(id: string): Promise<void> {
+    await api.delete(`/firmware/${id}`)
+  },
+
   async syncFromGitea(repositoryId: string): Promise<{ synced: number; message: string }> {
     const response = await api.post<ApiResponse<{ synced: number; message: string }>>(
       `/firmware/sync/${repositoryId}`

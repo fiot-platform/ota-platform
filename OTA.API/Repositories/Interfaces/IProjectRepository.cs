@@ -33,14 +33,23 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged list of matching projects.</returns>
-        Task<List<ProjectEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<List<ProjectEntity>> SearchAsync(string filter, int page, int pageSize, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Counts projects matching the specified filter string.
         /// </summary>
         /// <param name="filter">Search text to match against project name or description.</param>
+        /// <param name="allowedProjectIds">When non-null, restricts results to the given project IDs (project scope).</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Total number of matching projects.</returns>
-        Task<long> CountAsync(string filter, CancellationToken cancellationToken = default);
+        Task<long> CountAsync(string filter, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves a project by its platform GUID (projectId field), not MongoDB _id.
+        /// </summary>
+        /// <param name="projectId">The platform GUID of the project.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The matching project entity, or null if not found.</returns>
+        Task<ProjectEntity?> GetByProjectIdAsync(string projectId, CancellationToken cancellationToken = default);
     }
 }

@@ -83,10 +83,10 @@ export function FirmwareTrendChart({ data, isLoading = false }: FirmwareTrendCha
         <Line
           type="monotone"
           dataKey="submitted"
-          stroke="#3b82f6"
+          stroke="#06b6d4"
           strokeWidth={2}
           dot={false}
-          activeDot={{ r: 4, fill: '#3b82f6' }}
+          activeDot={{ r: 4, fill: '#06b6d4' }}
           name="Submitted"
         />
         <Line

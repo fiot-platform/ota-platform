@@ -92,5 +92,25 @@ namespace OTA.API.Services.Interfaces
             string defaultBranch,
             bool isPrivate,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Creates or updates a single file in a Gitea repository using the Contents API.
+        /// If the file already exists, the operation is skipped (returns silently).
+        /// </summary>
+        /// <param name="owner">Repository owner (user or org).</param>
+        /// <param name="repo">Repository name.</param>
+        /// <param name="filePath">Path inside the repo (e.g. "v2.1.0/firmware.bin").</param>
+        /// <param name="commitMessage">Git commit message.</param>
+        /// <param name="content">Raw file bytes — will be Base64-encoded before sending.</param>
+        /// <param name="branch">Target branch (defaults to "main").</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task CreateFileAsync(
+            string owner,
+            string repo,
+            string filePath,
+            string commitMessage,
+            byte[] content,
+            string branch = "main",
+            CancellationToken cancellationToken = default);
     }
 }

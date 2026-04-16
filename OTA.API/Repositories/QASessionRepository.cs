@@ -45,6 +45,23 @@ namespace OTA.API.Repositories
             return await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
         }
 
+        public async Task<Dictionary<string, string>> GetStatusByFirmwareIdsAsync(IEnumerable<string> firmwareIds, CancellationToken cancellationToken = default)
+        {
+            var ids = firmwareIds?.ToList() ?? new List<string>();
+            if (ids.Count == 0) return new Dictionary<string, string>();
+
+            var filter = Builders<QASessionEntity>.Filter.In(q => q.FirmwareId, ids);
+            var projection = Builders<QASessionEntity>.Projection
+                .Include(q => q.FirmwareId)
+                .Include(q => q.Status);
+
+            var results = await _collection.Find(filter)
+                .Project<QASessionEntity>(projection)
+                .ToListAsync(cancellationToken);
+
+            return results.ToDictionary(q => q.FirmwareId, q => q.Status.ToString());
+        }
+
         public async Task InsertAsync(QASessionEntity entity, CancellationToken cancellationToken = default)
         {
             await _collection.InsertOneAsync(entity, null, cancellationToken);

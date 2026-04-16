@@ -26,6 +26,8 @@ namespace OTA.API.Services
         private readonly IFirmwareRepository _firmwareRepository;
         private readonly IRolloutPolicyRepository _policyRepository;
         private readonly IAuditService _auditService;
+        private readonly INotificationService _notificationService;
+        private readonly IMqttService _mqttService;
         private readonly ILogger<OtaService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -41,15 +43,19 @@ namespace OTA.API.Services
             IFirmwareRepository firmwareRepository,
             IRolloutPolicyRepository policyRepository,
             IAuditService auditService,
+            INotificationService notificationService,
+            IMqttService mqttService,
             ILogger<OtaService> logger)
         {
-            _rolloutRepository = rolloutRepository ?? throw new ArgumentNullException(nameof(rolloutRepository));
-            _jobRepository = jobRepository ?? throw new ArgumentNullException(nameof(jobRepository));
-            _deviceRepository = deviceRepository ?? throw new ArgumentNullException(nameof(deviceRepository));
-            _firmwareRepository = firmwareRepository ?? throw new ArgumentNullException(nameof(firmwareRepository));
-            _policyRepository = policyRepository ?? throw new ArgumentNullException(nameof(policyRepository));
-            _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _rolloutRepository   = rolloutRepository   ?? throw new ArgumentNullException(nameof(rolloutRepository));
+            _jobRepository       = jobRepository       ?? throw new ArgumentNullException(nameof(jobRepository));
+            _deviceRepository    = deviceRepository    ?? throw new ArgumentNullException(nameof(deviceRepository));
+            _firmwareRepository  = firmwareRepository  ?? throw new ArgumentNullException(nameof(firmwareRepository));
+            _policyRepository    = policyRepository    ?? throw new ArgumentNullException(nameof(policyRepository));
+            _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _mqttService         = mqttService         ?? throw new ArgumentNullException(nameof(mqttService));
+            _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc/>
@@ -120,20 +126,49 @@ namespace OTA.API.Services
                 null, JsonSerializer.Serialize(new { rollout.Id, rollout.FirmwareId, DeviceCount = initialBatchSize }, _jsonOptions),
                 ipAddress, cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "Rollout Created",
+                $"Rollout '{rollout.Name}' created for {initialBatchSize} device(s).",
+                new Dictionary<string, string> { ["type"] = "rollout_created", ["rolloutId"] = rollout.RolloutId, ["name"] = rollout.Name },
+                cancellationToken: CancellationToken.None);
+
+            // Publish OTA update metadata to each target device via MQTT
+            _ = PublishOtaToDevicesAsync(initialBatch, firmware, cancellationToken);
+
             return MapRolloutToDto(rollout);
         }
 
         /// <inheritdoc/>
         public async Task<RolloutDto> StartRolloutAsync(string rolloutId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default)
-            => await TransitionStatusAsync(rolloutId, RolloutStatus.Draft, RolloutStatus.Active, AuditAction.RolloutStarted, callerUserId, callerEmail, ipAddress, cancellationToken);
+        {
+            var dto = await TransitionStatusAsync(rolloutId, RolloutStatus.Draft, RolloutStatus.Active, AuditAction.RolloutStarted, callerUserId, callerEmail, ipAddress, cancellationToken);
+            _ = _notificationService.NotifyRolloutStartedAsync(dto.RolloutId, dto.Name, dto.ProjectId, CancellationToken.None);
+            return dto;
+        }
 
         /// <inheritdoc/>
         public async Task<RolloutDto> PauseRolloutAsync(string rolloutId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default)
-            => await TransitionStatusAsync(rolloutId, RolloutStatus.Active, RolloutStatus.Paused, AuditAction.RolloutPaused, callerUserId, callerEmail, ipAddress, cancellationToken);
+        {
+            var dto = await TransitionStatusAsync(rolloutId, RolloutStatus.Active, RolloutStatus.Paused, AuditAction.RolloutPaused, callerUserId, callerEmail, ipAddress, cancellationToken);
+            _ = _notificationService.NotifyAsync(
+                "Rollout Paused",
+                $"Rollout '{dto.Name}' was paused.",
+                new Dictionary<string, string> { ["type"] = "rollout_paused", ["rolloutId"] = dto.RolloutId, ["name"] = dto.Name },
+                cancellationToken: CancellationToken.None);
+            return dto;
+        }
 
         /// <inheritdoc/>
         public async Task<RolloutDto> ResumeRolloutAsync(string rolloutId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default)
-            => await TransitionStatusAsync(rolloutId, RolloutStatus.Paused, RolloutStatus.Active, AuditAction.RolloutResumed, callerUserId, callerEmail, ipAddress, cancellationToken);
+        {
+            var dto = await TransitionStatusAsync(rolloutId, RolloutStatus.Paused, RolloutStatus.Active, AuditAction.RolloutResumed, callerUserId, callerEmail, ipAddress, cancellationToken);
+            _ = _notificationService.NotifyAsync(
+                "Rollout Resumed",
+                $"Rollout '{dto.Name}' was resumed.",
+                new Dictionary<string, string> { ["type"] = "rollout_resumed", ["rolloutId"] = dto.RolloutId, ["name"] = dto.Name },
+                cancellationToken: CancellationToken.None);
+            return dto;
+        }
 
         /// <inheritdoc/>
         public async Task<RolloutDto> CancelRolloutAsync(string rolloutId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default)
@@ -161,6 +196,8 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Status = RolloutStatus.Cancelled.ToString() }, _jsonOptions),
                 ipAddress, cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyRolloutFailedAsync(rollout.RolloutId, rollout.Name, "Cancelled by user", rollout.ProjectId, CancellationToken.None);
+
             return MapRolloutToDto(rollout);
         }
 
@@ -173,11 +210,11 @@ namespace OTA.API.Services
         }
 
         /// <inheritdoc/>
-        public async Task<PagedResult<RolloutDto>> GetRolloutsAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default)
+        public async Task<PagedResult<RolloutDto>> GetRolloutsAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
-            var items = await _rolloutRepository.SearchAsync(filter, page, pageSize, cancellationToken);
+            var items = await _rolloutRepository.SearchAsync(filter, page, pageSize, projectId, cancellationToken);
             return new PagedResult<RolloutDto>
             {
                 Items = items.Select(MapRolloutToDto).ToList(),
@@ -215,6 +252,12 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { Status = OtaJobStatus.Pending.ToString() }, _jsonOptions),
                 ipAddress, cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "OTA Job Retried",
+                $"OTA job '{jobId}' for device '{job.DeviceId}' was retried.",
+                new Dictionary<string, string> { ["type"] = "ota_job_retried", ["jobId"] = jobId, ["deviceId"] = job.DeviceId },
+                cancellationToken: CancellationToken.None);
+
             return MapJobToDto(job);
         }
 
@@ -248,6 +291,59 @@ namespace OTA.API.Services
         }
 
         // ── Private helpers ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Publishes OTA firmware metadata to each device in the batch via MQTT.
+        /// Topic: OTA/{serialNumber}/Card  (one message per device, fire-and-forget).
+        /// </summary>
+        private async Task PublishOtaToDevicesAsync(
+            List<DeviceEntity> devices,
+            FirmwareVersionEntity firmware,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var payload = new MqttOtaUpdateEnvelope
+                {
+                    OtaUpdate = new MqttOtaUpdate
+                    {
+                        Version     = firmware.Version,
+                        Description = firmware.ReleaseNotes ?? $"OTA update to version {firmware.Version}",
+                        Mandatory   = firmware.IsMandate,
+                        Files       =
+                        [
+                            new MqttFirmwareFile
+                            {
+                                FileIndex   = 1,
+                                DownloadUrl = firmware.DownloadUrl,
+                                FileSize    = firmware.FileSizeBytes,
+                                Checksum    = new MqttChecksum
+                                {
+                                    Type  = "SHA256",
+                                    Value = firmware.FileSha256
+                                }
+                            }
+                        ]
+                    }
+                };
+
+                foreach (var device in devices)
+                {
+                    payload.OtaUpdate.DeviceId = device.SerialNumber;
+                    var json  = JsonSerializer.Serialize(payload, _jsonOptions);
+                    var topic = MqttTopics.OtaMetadataPublish(device.SerialNumber);
+
+                    await _mqttService.PublishAsync(topic, json, cancellationToken);
+                    _logger.LogInformation(
+                        "OTA rollout published to device '{Serial}' on topic '{Topic}'.",
+                        device.SerialNumber, topic);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MQTT OTA publish failed for rollout — continuing without MQTT delivery.");
+            }
+        }
 
         private async Task<List<DeviceEntity>> ResolveTargetDevicesAsync(CreateRolloutRequest request, CancellationToken cancellationToken)
         {

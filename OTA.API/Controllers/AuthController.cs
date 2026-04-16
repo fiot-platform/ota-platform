@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using OTA.API.Helpers;
 using OTA.API.Models.DTOs;
 using OTA.API.Services.Interfaces;
+using OTA.API.Models.Enums;
 
 namespace OTA.API.Controllers
 {
@@ -18,12 +19,14 @@ namespace OTA.API.Controllers
     {
         private readonly IAuthService _authService;
         private readonly IGiteaApiService _giteaApiService;
+        private readonly IUserService _userService;
         private readonly ILogger<AuthController> _logger;
 
-        public AuthController(IAuthService authService, IGiteaApiService giteaApiService, ILogger<AuthController> logger)
+        public AuthController(IAuthService authService, IGiteaApiService giteaApiService, IUserService userService, ILogger<AuthController> logger)
         {
             _authService     = authService ?? throw new ArgumentNullException(nameof(authService));
             _giteaApiService = giteaApiService ?? throw new ArgumentNullException(nameof(giteaApiService));
+            _userService     = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger          = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -115,6 +118,71 @@ namespace OTA.API.Controllers
             _logger.LogInformation("User {UserId} logged out", userId);
 
             return Ok(ApiResponse.OkNoData("Logged out successfully."));
+        }
+
+        /// <summary>
+        /// Returns the live profile of the currently authenticated user from the database,
+        /// including up-to-date role, projectScope, and customerId.
+        /// Use this instead of relying solely on JWT claims which may be stale.
+        /// </summary>
+        [HttpGet("me")]
+        [Authorize]
+        [ProducesResponseType(typeof(ApiResponse<UserDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetCurrentUser(CancellationToken cancellationToken = default)
+        {
+            var userId = User.FindFirstValue("userId")
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue("sub");
+
+            if (string.IsNullOrWhiteSpace(userId))
+                return Unauthorized(ApiResponse.Fail("Unable to resolve user identity from token."));
+
+            var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            if (user == null)
+                return NotFound(ApiResponse.Fail("User not found."));
+
+            return Ok(ApiResponse<UserDto>.Ok(user, "Current user retrieved."));
+        }
+
+        /// <summary>
+        /// Allows the currently authenticated user to change their own password by providing
+        /// the current password for verification alongside the new password.
+        /// </summary>
+        [HttpPost("change-password")]
+        [Authorize]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> ChangePassword(
+            [FromBody] ChangeMyPasswordRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse.Fail("Validation failed.", errors));
+            }
+
+            var userId = User.FindFirstValue("userId")
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue("sub");
+
+            if (string.IsNullOrWhiteSpace(userId))
+                return Unauthorized(ApiResponse.Fail("Unable to resolve user identity from token."));
+
+            var changeRequest = new ChangePasswordRequest
+            {
+                CurrentPassword = request.CurrentPassword,
+                NewPassword     = request.NewPassword,
+                ConfirmPassword = request.NewPassword
+            };
+
+            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+            await _userService.ChangePasswordAsync(userId, changeRequest, clientIp, cancellationToken);
+
+            return Ok(ApiResponse.OkNoData("Password changed successfully."));
         }
 
         /// <summary>

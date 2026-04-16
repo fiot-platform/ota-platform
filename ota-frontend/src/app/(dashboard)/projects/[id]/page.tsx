@@ -53,11 +53,13 @@ export default function ProjectDetailPage() {
   const { data: repositories, isLoading: reposLoading } = useQuery({
     queryKey: ['repositories', { projectId: id }],
     queryFn: () => repositoryService.getRepositories({ projectId: id }),
+    staleTime: 0,
   })
 
   const { data: firmwareList, isLoading: firmwareLoading } = useQuery({
     queryKey: ['firmware', { projectId: id, pageSize: 5 }],
     queryFn: () => firmwareService.getFirmwareList({ projectId: id, pageSize: 5 }),
+    staleTime: 0,
   })
 
   const registerRepoMutation = useMutation({

@@ -14,10 +14,13 @@ import { CreateRolloutForm } from '@/components/forms/CreateRolloutForm'
 import { useToast } from '@/components/ui/ToastProvider'
 import { Rollout, RolloutStatus } from '@/types'
 import { formatDate, formatPercent } from '@/utils/formatters'
+import { useProjectScope } from '@/hooks/useProjectScope'
+import { ProjectScopeBanner } from '@/components/ui/ProjectScopeBanner'
 
 export default function OtaRolloutsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { scopedProjectId, scopedProjectName, isScoped } = useProjectScope()
 
   const [search, setSearch] = React.useState('')
   const [statusFilter, setStatusFilter] = React.useState('')
@@ -27,10 +30,11 @@ export default function OtaRolloutsPage() {
   const [confirmAction, setConfirmAction] = React.useState<{ rollout: Rollout; action: 'start' | 'pause' | 'resume' | 'cancel' } | null>(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['rollouts', { search, status: statusFilter, page, pageSize }],
+    queryKey: ['rollouts', { search, status: statusFilter, projectId: isScoped ? scopedProjectId : undefined, page, pageSize }],
     queryFn: () => otaService.getRollouts({
       search,
       status: (statusFilter as RolloutStatus) || undefined,
+      projectId: isScoped ? (scopedProjectId ?? undefined) : undefined,
       page,
       pageSize,
     }),
@@ -212,6 +216,11 @@ export default function OtaRolloutsPage() {
           </RoleGuard>
         }
       />
+
+      {/* Project scope banner — QA users only */}
+      {isScoped && scopedProjectId && (
+        <ProjectScopeBanner projectId={scopedProjectId} projectName={scopedProjectName} />
+      )}
 
       {/* Filters */}
       <div className="filter-bar">

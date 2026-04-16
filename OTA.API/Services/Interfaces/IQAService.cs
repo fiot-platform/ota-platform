@@ -8,7 +8,7 @@ namespace OTA.API.Services.Interfaces
     {
         Task<QASessionDto?> GetSessionAsync(string firmwareId, CancellationToken cancellationToken = default);
 
-        Task<QASessionDto> StartSessionAsync(string firmwareId, string userId, CancellationToken cancellationToken = default);
+        Task<QASessionDto> StartSessionAsync(string firmwareId, string userId, string? userName = null, CancellationToken cancellationToken = default);
 
         Task<QASessionDto> UpdateStatusAsync(string firmwareId, UpdateQAStatusRequest request, string userId, CancellationToken cancellationToken = default);
 

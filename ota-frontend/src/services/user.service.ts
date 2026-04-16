@@ -56,6 +56,11 @@ export const userService = {
     return response.data.data
   },
 
+  async assignProjects(id: string, projectIds: string[]): Promise<User> {
+    const response = await api.post<ApiResponse<User>>(`/users/${id}/assign-projects`, { projectIds })
+    return response.data.data
+  },
+
   async deleteUser(id: string): Promise<void> {
     await api.delete(`/users/${id}`)
   },

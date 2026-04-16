@@ -25,15 +25,15 @@ const STATUS_COLORS: Record<string, string> = {
   Inactive: '#94a3b8',
   Suspended: '#f59e0b',
   Decommissioned: '#ef4444',
-  Pending: '#3b82f6',
+  Pending: '#06b6d4',
   UpToDate: '#22c55e',
   UpdateAvailable: '#f59e0b',
-  Updating: '#3b82f6',
+  Updating: '#8b5cf6',
   Failed: '#ef4444',
   Offline: '#94a3b8',
 }
 
-const DEFAULT_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
+const DEFAULT_COLORS = ['#22c55e', '#06b6d4', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
 
 function getColor(status: string, index: number): string {
   return STATUS_COLORS[status] ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length]

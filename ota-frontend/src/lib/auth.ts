@@ -72,7 +72,13 @@ function parseJwt(token: string): JwtPayload | null {
         .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
         .join('')
     )
-    return JSON.parse(jsonPayload) as JwtPayload
+    const payload = JSON.parse(jsonPayload) as JwtPayload
+    // The backend stores projectScope as a comma-separated string in the JWT claim
+    if (typeof (payload.projectScope as unknown) === 'string') {
+      const raw = payload.projectScope as unknown as string
+      payload.projectScope = raw.length > 0 ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []
+    }
+    return payload
   } catch {
     return null
   }

@@ -21,7 +21,7 @@ namespace OTA.API.Services.Interfaces
         /// <param name="ipAddress">The caller's IP address for audit context.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>The created firmware DTO.</returns>
-        Task<FirmwareDto> CreateFirmwareAsync(CreateFirmwareRequest request, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+        Task<FirmwareDto> CreateFirmwareAsync(CreateFirmwareRequest request, string callerUserId, string callerName, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Updates mutable metadata fields of a firmware record that has not yet been approved.
@@ -99,6 +99,7 @@ namespace OTA.API.Services.Interfaces
             string? repositoryId,
             int page,
             int pageSize,
+            List<string>? allowedProjectIds = null,
             CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -109,6 +110,11 @@ namespace OTA.API.Services.Interfaces
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Number of new firmware records created.</returns>
         Task<int> SyncFirmwareFromGiteaAsync(string repositoryId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Permanently deletes a firmware record. SuperAdmin only. Approved firmware cannot be deleted.
+        /// </summary>
+        Task DeleteFirmwareAsync(string firmwareId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Marks an approved firmware as Deprecated, making it ineligible for new rollouts but preserving existing jobs.

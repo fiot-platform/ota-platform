@@ -52,7 +52,7 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="channel">The release channel to search within.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>List of approved firmware entities compatible with the device.</returns>
-        Task<List<FirmwareVersionEntity>> GetApprovedForModelAsync(string model, string hardwareRevision, FirmwareChannel channel, CancellationToken cancellationToken = default);
+        Task<List<FirmwareVersionEntity>> GetApprovedForModelAsync(string model, string? hardwareRevision, FirmwareChannel? channel, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Retrieves a firmware entity by its platform-assigned FirmwareId (GUID), not the MongoDB _id.
@@ -76,6 +76,7 @@ namespace OTA.API.Repositories.Interfaces
             string? repositoryId,
             int page,
             int pageSize,
+            List<string>? allowedProjectIds = null,
             CancellationToken cancellationToken = default);
 
         /// <summary>

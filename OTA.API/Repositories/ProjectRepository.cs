@@ -75,7 +75,7 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<List<ProjectEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default)
+        public async Task<List<ProjectEntity>> SearchAsync(string filter, int page, int pageSize, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
@@ -98,6 +98,9 @@ namespace OTA.API.Repositories
                     );
                 }
 
+                if (allowedProjectIds != null)
+                    mongoFilter &= Builders<ProjectEntity>.Filter.In(p => p.Id, allowedProjectIds);
+
                 return await Collection.Find(mongoFilter)
                     .SortBy(p => p.Name)
                     .Skip(skip)
@@ -111,7 +114,24 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<long> CountAsync(string filter, CancellationToken cancellationToken = default)
+        public async Task<ProjectEntity?> GetByProjectIdAsync(string projectId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(projectId))
+                throw new ArgumentException("ProjectId must not be null or empty.", nameof(projectId));
+
+            try
+            {
+                var filter = Builders<ProjectEntity>.Filter.Eq(p => p.ProjectId, projectId);
+                return await Collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to retrieve project with projectId '{projectId}'.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<long> CountAsync(string filter, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -129,6 +149,9 @@ namespace OTA.API.Repositories
                         Builders<ProjectEntity>.Filter.Regex(p => p.Description, regex)
                     );
                 }
+
+                if (allowedProjectIds != null)
+                    mongoFilter &= Builders<ProjectEntity>.Filter.In(p => p.Id, allowedProjectIds);
 
                 return await Collection.CountDocumentsAsync(mongoFilter, null, cancellationToken);
             }

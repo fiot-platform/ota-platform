@@ -2,7 +2,8 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, RefreshCw, Loader2, PowerOff } from 'lucide-react'
+import { Plus, Search, RefreshCw, Loader2, PowerOff, Eye, Trash2 } from 'lucide-react'
+import Link from 'next/link'
 import { repositoryService } from '@/services/repository.service'
 import { projectService } from '@/services/project.service'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -12,12 +13,15 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { RepositoryForm, RegisterRepositoryPayload } from '@/components/forms/RepositoryForm'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { useToast } from '@/components/ui/ToastProvider'
-import { Repository } from '@/types'
+import { Repository, UserRole } from '@/types'
 import { formatRelativeTime } from '@/utils/formatters'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function RepositoriesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { role } = useAuth()
+  const canFilterByProject = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
 
   const [search, setSearch] = React.useState('')
   const [projectId, setProjectId] = React.useState('')
@@ -25,6 +29,7 @@ export default function RepositoriesPage() {
   const [pageSize, setPageSize] = React.useState(25)
   const [syncingId, setSyncingId] = React.useState<string | null>(null)
   const [confirmDeactivate, setConfirmDeactivate] = React.useState<Repository | null>(null)
+  const [confirmDelete, setConfirmDelete] = React.useState<Repository | null>(null)
   const [repoFormOpen, setRepoFormOpen] = React.useState(false)
 
   const { data, isLoading } = useQuery({
@@ -58,6 +63,16 @@ export default function RepositoriesPage() {
       setConfirmDeactivate(null)
     },
     onError: () => toast({ title: 'Failed to deactivate', variant: 'error' }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => repositoryService.deleteRepository(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repositories'] })
+      toast({ title: 'Repository deleted', variant: 'success' })
+      setConfirmDelete(null)
+    },
+    onError: () => toast({ title: 'Failed to delete repository', variant: 'error' }),
   })
 
   const registerMutation = useMutation({
@@ -131,6 +146,13 @@ export default function RepositoriesPage() {
       header: 'Actions',
       cell: (row) => (
         <div className="flex items-center gap-1">
+          <Link
+            href={`/repositories/${row.id}`}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            View
+          </Link>
           <RoleGuard module="Repositories" action="execute">
             <button
               onClick={() => handleSync(row.id)}
@@ -155,6 +177,15 @@ export default function RepositoriesPage() {
                 Deactivate
               </button>
             )}
+          </RoleGuard>
+          <RoleGuard module="Repositories" action="delete">
+            <button
+              onClick={() => setConfirmDelete(row)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </RoleGuard>
         </div>
       ),
@@ -190,16 +221,18 @@ export default function RepositoriesPage() {
           />
         </div>
 
-        <select
-          value={projectId}
-          onChange={(e) => { setProjectId(e.target.value); setPage(1) }}
-          className="input w-auto"
-        >
-          <option value="">All Projects</option>
-          {(projects?.items ?? []).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        {canFilterByProject && (
+          <select
+            value={projectId}
+            onChange={(e) => { setProjectId(e.target.value); setPage(1) }}
+            className="input w-auto"
+          >
+            <option value="">All Projects</option>
+            {(projects?.items ?? []).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        )}
 
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['repositories'] })}
@@ -232,6 +265,18 @@ export default function RepositoriesPage() {
         variant="warning"
         onConfirm={() => confirmDeactivate && deactivateMutation.mutate(confirmDeactivate.id)}
         isLoading={deactivateMutation.isPending}
+      />
+
+      {/* Delete Confirm */}
+      <ConfirmDialog
+        open={Boolean(confirmDelete)}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+        title="Delete Repository"
+        message={`Permanently delete "${confirmDelete?.name}"? This cannot be undone and will remove all associated data.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => confirmDelete && deleteMutation.mutate(confirmDelete.id)}
+        isLoading={deleteMutation.isPending}
       />
 
       {/* Register Repository Form */}

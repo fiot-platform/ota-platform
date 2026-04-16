@@ -26,10 +26,12 @@ interface DataTableProps<T> {
   isLoading?: boolean
   emptyMessage?: string
   emptyIcon?: React.ReactNode
-  keyExtractor: (row: T) => string
+  keyExtractor: (row: T, index?: number) => string
   onRowClick?: (row: T) => void
   rowClassName?: (row: T) => string
   stickyHeader?: boolean
+  /** Remove card background/border/shadow — use inside an existing card */
+  flat?: boolean
 }
 
 // ─── Loading Skeleton ─────────────────────────────────────────────────────────
@@ -56,17 +58,19 @@ function PaginationControls({
   pagination,
   onPageChange,
   onPageSizeChange,
+  flat,
 }: {
   pagination: PaginationInfo
   onPageChange?: (page: number) => void
   onPageSizeChange?: (pageSize: number) => void
+  flat?: boolean
 }) {
   const { page, pageSize, totalCount, totalPages } = pagination
   const start = Math.min((page - 1) * pageSize + 1, totalCount)
   const end = Math.min(page * pageSize, totalCount)
 
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-white rounded-b-xl">
+    <div className={clsx('flex items-center justify-between px-4 py-3 border-t border-slate-200', !flat && 'bg-white rounded-b-xl')}>
       <div className="flex items-center gap-2">
         <span className="text-sm text-slate-500">Rows per page:</span>
         <select
@@ -179,9 +183,10 @@ export function DataTable<T>({
   onRowClick,
   rowClassName,
   stickyHeader = false,
+  flat = false,
 }: DataTableProps<T>) {
   return (
-    <div className="w-full rounded-xl border border-slate-200 bg-white shadow-card overflow-hidden">
+    <div className={clsx('w-full overflow-hidden', !flat && 'rounded-xl border border-slate-200 bg-white shadow-card')}>
       <div className={clsx('w-full overflow-x-auto', stickyHeader && 'max-h-[600px] overflow-y-auto')}>
         <table className="w-full text-sm">
           <thead className={clsx('bg-slate-50 border-b border-slate-200', stickyHeader && 'sticky top-0 z-10')}>
@@ -212,9 +217,9 @@ export function DataTable<T>({
                 </td>
               </tr>
             ) : (
-              data.map((row) => (
+              data.map((row, idx) => (
                 <tr
-                  key={keyExtractor(row)}
+                  key={keyExtractor(row, idx)}
                   onClick={() => onRowClick?.(row)}
                   className={clsx(
                     'border-b border-slate-100 last:border-b-0 transition-colors duration-100',
@@ -246,6 +251,7 @@ export function DataTable<T>({
           pagination={pagination}
           onPageChange={onPageChange}
           onPageSizeChange={onPageSizeChange}
+          flat={flat}
         />
       )}
     </div>

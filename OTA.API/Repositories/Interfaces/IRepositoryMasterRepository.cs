@@ -41,6 +41,6 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged list of matching repositories.</returns>
-        Task<List<RepositoryMasterEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<List<RepositoryMasterEntity>> SearchAsync(string filter, int page, int pageSize, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
     }
 }

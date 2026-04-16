@@ -17,11 +17,13 @@ namespace OTA.API.Controllers
     public class RepositoryController : ControllerBase
     {
         private readonly IRepositoryService _repositoryService;
+        private readonly IUserService _userService;
         private readonly ILogger<RepositoryController> _logger;
 
-        public RepositoryController(IRepositoryService repositoryService, ILogger<RepositoryController> logger)
+        public RepositoryController(IRepositoryService repositoryService, IUserService userService, ILogger<RepositoryController> logger)
         {
             _repositoryService = repositoryService ?? throw new ArgumentNullException(nameof(repositoryService));
+            _userService       = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger            = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -44,9 +46,28 @@ namespace OTA.API.Controllers
             [FromQuery] int pageSize = 25,
             CancellationToken cancellationToken = default)
         {
-            var items = await _repositoryService.GetRepositoriesAsync(filter ?? string.Empty, page, pageSize, projectId, cancellationToken);
+            var allowedProjectIds = await GetProjectScopeAsync(cancellationToken);
+            var items = await _repositoryService.GetRepositoriesAsync(filter ?? string.Empty, page, pageSize, projectId, allowedProjectIds, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, items.Count);
             return Ok(ApiResponse<List<RepositoryDto>>.Ok(items, "Repositories retrieved successfully.", pagination));
+        }
+
+        private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
+        {
+            // SuperAdmin and PlatformAdmin see everything — no filtering.
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+            _logger.LogInformation("[ProjectScope] Role={Role}", role);
+            if (role is "SuperAdmin" or "PlatformAdmin") return null;
+
+            // Fetch live project scope from the database so changes take effect without re-login.
+            var userId = CurrentUserId;
+            _logger.LogInformation("[ProjectScope] UserId={UserId}", userId);
+            if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
+
+            var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            var scope = user?.ProjectScope ?? new List<string>();
+            _logger.LogInformation("[ProjectScope] UserFound={Found}, Scope=[{Scope}]", user != null, string.Join(",", scope));
+            return scope;
         }
 
         /// <summary>Returns a single repository by its identifier.</summary>
@@ -71,9 +92,9 @@ namespace OTA.API.Controllers
             return Ok(ApiResponse<List<RepositoryDto>>.Ok(repos, $"Repositories for project '{projectId}' retrieved."));
         }
 
-        /// <summary>Registers a new Gitea repository. SuperAdmin, PlatformAdmin, and DevOpsEngineer only.</summary>
+        /// <summary>Registers a new Gitea repository. SuperAdmin and PlatformAdmin only.</summary>
         [HttpPost]
-        [Authorize(Roles = "SuperAdmin,PlatformAdmin,DevOpsEngineer")]
+        [Authorize(Roles = "SuperAdmin,PlatformAdmin")]
         [ProducesResponseType(typeof(ApiResponse<RepositoryDto>), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> RegisterRepository(
@@ -112,7 +133,7 @@ namespace OTA.API.Controllers
             return Ok(ApiResponse<RepositoryDto>.Ok(updated, "Repository updated successfully."));
         }
 
-        /// <summary>Triggers a metadata sync from Gitea. SuperAdmin, PlatformAdmin, and DevOpsEngineer only.</summary>
+        /// <summary>Triggers a metadata sync from Gitea. SuperAdmin, PlatformAdmin, and ReleaseManager only.</summary>
         [HttpPost("{id}/sync")]
         [Authorize(Policy = "CanSyncRepository")]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -132,6 +153,17 @@ namespace OTA.API.Controllers
         {
             await _repositoryService.DeactivateRepositoryAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData("Repository deactivated successfully."));
+        }
+
+        /// <summary>Permanently deletes a repository registration. SuperAdmin only.</summary>
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "SuperAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DeleteRepository(string id, CancellationToken cancellationToken = default)
+        {
+            await _repositoryService.DeleteRepositoryAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse.OkNoData("Repository deleted successfully."));
         }
     }
 }

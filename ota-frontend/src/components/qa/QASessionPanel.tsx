@@ -594,7 +594,7 @@ export function QASessionPanel({ firmwareId, firmwareVersion }: QASessionPanelPr
                 <button
                   onClick={() => completeMutation.mutate({ finalStatus: QASessionStatus.Complete, remarks: 'All tests passed.' })}
                   disabled={completeMutation.isPending || session.openBugs > 0}
-                  className="btn-primary bg-success-600 hover:bg-success-700 disabled:opacity-50"
+                  className="btn-success disabled:opacity-50"
                   title={session.openBugs > 0 ? 'Resolve all open bugs before completing' : undefined}
                 >
                   <CheckCircle2 className="w-4 h-4" /> Mark Complete

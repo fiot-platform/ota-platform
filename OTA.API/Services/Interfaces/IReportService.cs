@@ -43,5 +43,35 @@ namespace OTA.API.Services.Interfaces
         /// <param name="customerId">Optional customer identifier. Null returns platform-wide data.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         Task<List<DeviceUpdateStatusDto>> GetDeviceUpdateStatusAsync(string? customerId, CancellationToken cancellationToken = default);
+
+        // ── Extended report methods ────────────────────────────────────────────
+
+        /// <summary>Returns a flat list of all platform users for the Users report.</summary>
+        Task<List<UserReportDto>> GetUsersReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns a flat list of all projects with repo/firmware/rollout counts for the Projects report.</summary>
+        Task<List<ProjectReportDto>> GetProjectsReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns a flat list of all repositories for the Repositories report.</summary>
+        Task<List<RepositoryReportDto>> GetRepositoriesReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns a flat list of all firmware versions for the Firmware Versions report.</summary>
+        Task<List<FirmwareVersionReportDto>> GetFirmwareVersionsReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns a flat list of all devices for the Devices report.</summary>
+        Task<List<DeviceReportDto>> GetDevicesReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns flat rows for the Project → Repository → Firmware tree report.</summary>
+        Task<List<ProjectRepoFirmwareRowDto>> GetProjectRepoFirmwareReportAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>Returns flat rows for the Device → OTA Job History tree report.</summary>
+        /// <param name="deviceId">Optional device ID filter. Null returns all devices.</param>
+        Task<List<DeviceOtaHistoryRowDto>> GetDeviceOtaHistoryAsync(string? deviceId, CancellationToken cancellationToken = default);
+
+        /// <summary>Returns one row per day over the last <paramref name="days"/> days with OTA job outcome counts.</summary>
+        Task<List<DailyOtaProgressDto>> GetDailyOtaProgressAsync(int days, CancellationToken cancellationToken = default);
+
+        /// <summary>Returns one row per firmware lifecycle stage with count and percentage.</summary>
+        Task<List<FirmwareStageReportDto>> GetFirmwareStageReportAsync(CancellationToken cancellationToken = default);
     }
 }

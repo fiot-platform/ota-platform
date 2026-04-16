@@ -33,12 +33,16 @@ export const repositoryService = {
   },
 
   async syncRepository(id: string): Promise<{ message: string }> {
-    const response = await api.post<ApiResponse<{ message: string }>>(`/repositories/${id}/sync`)
-    return response.data.data
+    const response = await api.post<ApiResponse<null>>(`/repositories/${id}/sync`)
+    return { message: response.data.message ?? 'Repository synchronised successfully.' }
   },
 
   async deactivateRepository(id: string): Promise<void> {
     await api.post(`/repositories/${id}/deactivate`)
+  },
+
+  async deleteRepository(id: string): Promise<void> {
+    await api.delete(`/repositories/${id}`)
   },
 
   async activateRepository(id: string): Promise<void> {

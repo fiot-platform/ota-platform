@@ -17,20 +17,11 @@ namespace OTA.API.Models.Enums
         /// <summary>Performs QA verification of firmware builds before they enter the approval queue.</summary>
         QA = 4,
 
-        /// <summary>Registers repositories, manages devices, and executes rollout operations.</summary>
-        DevOpsEngineer = 5,
-
-        /// <summary>Read-heavy role for troubleshooting device and rollout issues.</summary>
-        SupportEngineer = 6,
-
         /// <summary>Customer-tenant administrator managing their own users, devices, and rollouts.</summary>
         CustomerAdmin = 7,
 
         /// <summary>Read-only access to dashboards, firmware catalogue, and rollout status.</summary>
         Viewer = 8,
-
-        /// <summary>Compliance role with read + export access to all audit logs and reports.</summary>
-        Auditor = 9,
 
         /// <summary>Machine identity issued to registered IoT devices for check-update and report-status calls.</summary>
         Device = 10
@@ -251,6 +242,12 @@ namespace OTA.API.Models.Enums
         ProjectUpdated = 61,
         ProjectDeactivated = 62,
         ProjectActivated = 61,  // alias — same value as ProjectUpdated
+        ProjectDeleted = 63,
+
+        // Hard-delete actions (100+)
+        FirmwareDeleted = 100,
+        RepositoryDeleted = 101,
+        UserDeleted = 102,
 
         // Policy management
         PolicyCreated = 70,

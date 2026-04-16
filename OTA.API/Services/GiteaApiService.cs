@@ -248,6 +248,50 @@ namespace OTA.API.Services
                 ?? throw new InvalidOperationException("Gitea returned an empty response when creating repository.");
         }
 
+        /// <inheritdoc/>
+        public async Task CreateFileAsync(
+            string owner,
+            string repo,
+            string filePath,
+            string commitMessage,
+            byte[] content,
+            string branch = "main",
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(owner))   throw new ArgumentException("Owner is required.",    nameof(owner));
+            if (string.IsNullOrWhiteSpace(repo))     throw new ArgumentException("Repo is required.",     nameof(repo));
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("FilePath is required.", nameof(filePath));
+
+            // Gitea Contents API: PUT /api/v1/repos/{owner}/{repo}/contents/{filepath}
+            var encodedPath = string.Join("/", filePath.Split('/').Select(Uri.EscapeDataString));
+            var url = $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{encodedPath}";
+
+            var body = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                message = commitMessage,
+                content = Convert.ToBase64String(content),
+                branch  = string.IsNullOrWhiteSpace(branch) ? "main" : branch,
+            });
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            };
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+
+            // 201 Created = success; 422 Unprocessable = file already exists — both are acceptable
+            if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+            {
+                _logger.LogDebug("Gitea file created: {Owner}/{Repo}/{Path}", owner, repo, filePath);
+                return;
+            }
+
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Gitea CreateFile failed for {Owner}/{Repo}/{Path}: HTTP {Code} — {Error}",
+                owner, repo, filePath, (int)response.StatusCode, error);
+        }
+
         // ── Private helpers ─────────────────────────────────────────────────────────
 
         /// <summary>Wrapper for the Gitea user search response envelope.</summary>

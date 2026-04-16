@@ -4,11 +4,13 @@ import * as React from 'react'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Bell, ChevronDown, LogOut, User, Settings } from 'lucide-react'
+import { ChevronDown, LogOut, User, Settings } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { useGiteaProfile } from '@/hooks/useGiteaProfile'
 import { RoleBadge } from '@/components/ui/Badge'
+import { useRouter } from 'next/navigation'
+import { NotificationBell } from '@/components/layout/NotificationBell'
 
 // ─── Route Title Map ──────────────────────────────────────────────────────────
 
@@ -23,6 +25,7 @@ const routeTitles: Record<string, string> = {
   '/audit-logs': 'Audit Logs',
   '/reports': 'Reports & Analytics',
   '/webhook-events': 'Webhook Events',
+  '/profile': 'My Profile',
 }
 
 function getPageTitle(pathname: string): string {
@@ -47,7 +50,7 @@ function UserAvatar({ avatarUrl, displayName }: { avatarUrl?: string | null; dis
 
   if (avatarUrl && !imgError) {
     return (
-      <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-accent-200 bg-white flex items-center justify-center">
+      <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-accent-500 bg-white flex items-center justify-center">
         <Image
           src={avatarUrl}
           alt={displayName}
@@ -78,6 +81,7 @@ interface HeaderProps {
 
 export function Header({ sidebarCollapsed }: HeaderProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const { user, role, logout } = useAuth()
   const { data: giteaProfile } = useGiteaProfile()
   const pageTitle = getPageTitle(pathname)
@@ -108,13 +112,7 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
       {/* Right: Actions */}
       <div className="flex items-center gap-3">
         {/* Notification Bell */}
-        <button
-          className="relative w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-primary-700 hover:bg-slate-100 transition-colors"
-          aria-label="Notifications"
-        >
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger-500 rounded-full" />
-        </button>
+        <NotificationBell />
 
         {/* User Menu */}
         <DropdownMenu.Root>
@@ -148,7 +146,7 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
 
               <DropdownMenu.Item
                 className="flex items-center gap-2 px-4 py-2 text-sm text-primary-700 hover:bg-slate-50 cursor-pointer transition-colors outline-none"
-                onClick={() => {}}
+                onClick={() => router.push('/profile')}
               >
                 <User className="w-4 h-4 text-slate-400" />
                 Profile Settings
@@ -156,7 +154,7 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
 
               <DropdownMenu.Item
                 className="flex items-center gap-2 px-4 py-2 text-sm text-primary-700 hover:bg-slate-50 cursor-pointer transition-colors outline-none"
-                onClick={() => {}}
+                onClick={() => router.push('/profile')}
               >
                 <Settings className="w-4 h-4 text-slate-400" />
                 Preferences

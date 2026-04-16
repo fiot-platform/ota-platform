@@ -23,7 +23,7 @@ namespace OTA.API.Models.DTOs
 
         /// <summary>Plain-text initial password. Will be BCrypt-hashed before persistence.</summary>
         [Required(ErrorMessage = "Password is required.")]
-        [MinLength(8, ErrorMessage = "Password must be at least 8 characters.")]
+        [MinLength(6, ErrorMessage = "Password must be at least 6 characters.")]
         [MaxLength(128)]
         public string Password { get; set; } = string.Empty;
 
@@ -58,7 +58,7 @@ namespace OTA.API.Models.DTOs
         public string? Email { get; set; }
 
         /// <summary>New plain-text password. Only provided when the caller wants to change the password.</summary>
-        [MinLength(8)]
+        [MinLength(6)]
         [MaxLength(128)]
         public string? Password { get; set; }
 
@@ -125,13 +125,25 @@ namespace OTA.API.Models.DTOs
         public int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
     }
 
+    /// <summary>Request body for assigning a set of projects to a user's project scope.</summary>
+    public sealed class AssignProjectsRequest
+    {
+        /// <summary>
+        /// The complete list of ProjectId values to assign to the user.
+        /// Replaces the user's existing project scope entirely.
+        /// Pass an empty list to remove all project restrictions.
+        /// </summary>
+        [Required(ErrorMessage = "ProjectIds is required.")]
+        public List<string> ProjectIds { get; set; } = new();
+    }
+
     public sealed class ChangePasswordRequest
     {
         [Required(ErrorMessage = "Current password is required.")]
         public string CurrentPassword { get; set; } = string.Empty;
 
         [Required(ErrorMessage = "New password is required.")]
-        [MinLength(8, ErrorMessage = "Password must be at least 8 characters.")]
+        [MinLength(6, ErrorMessage = "Password must be at least 6 characters.")]
         [MaxLength(128)]
         public string NewPassword { get; set; } = string.Empty;
 

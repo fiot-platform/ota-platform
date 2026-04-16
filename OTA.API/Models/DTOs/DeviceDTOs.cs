@@ -10,68 +10,57 @@ namespace OTA.API.Models.DTOs
     /// <summary>Request body for registering a new IoT device with the platform.</summary>
     public sealed class RegisterDeviceRequest
     {
-        /// <summary>Manufacturer serial number; must be globally unique within the platform.</summary>
-        [Required(ErrorMessage = "SerialNumber is required.")]
+        /// <summary>Project the device belongs to.</summary>
+        [Required(ErrorMessage = "ProjectName is required.")]
+        [MaxLength(200)]
+        public string ProjectName { get; set; } = string.Empty;
+
+        /// <summary>Client / customer name that owns this device.</summary>
+        [Required(ErrorMessage = "CustomerCode is required.")]
+        [MaxLength(200)]
+        public string CustomerCode { get; set; } = string.Empty;
+
+        /// <summary>
+        /// MAC address, IMEI, or IP address — used as the unique device identifier.
+        /// </summary>
+        [Required(ErrorMessage = "MacImeiIp is required.")]
         [MaxLength(100)]
-        public string SerialNumber { get; set; } = string.Empty;
+        public string MacImeiIp { get; set; } = string.Empty;
 
         /// <summary>Device model identifier (e.g., "EDGE-GW-V2").</summary>
         [Required(ErrorMessage = "Model is required.")]
         [MaxLength(100)]
         public string Model { get; set; } = string.Empty;
 
-        /// <summary>Hardware revision string (e.g., "REV-B").</summary>
-        [MaxLength(50)]
-        public string? HardwareRevision { get; set; }
-
-        /// <summary>Customer tenant identifier that owns this device.</summary>
-        [Required(ErrorMessage = "CustomerId is required.")]
-        [MaxLength(36)]
-        public string CustomerId { get; set; } = string.Empty;
-
-        /// <summary>Display name of the customer (for denormalisation).</summary>
-        [Required(ErrorMessage = "CustomerName is required.")]
-        [MaxLength(200)]
-        public string CustomerName { get; set; } = string.Empty;
-
-        /// <summary>Site or location identifier where the device is deployed.</summary>
-        [MaxLength(36)]
-        public string? SiteId { get; set; }
-
-        /// <summary>Display name of the site (for denormalisation).</summary>
-        [MaxLength(200)]
-        public string? SiteName { get; set; }
-
-        /// <summary>Initial firmware version currently running on the device at registration time.</summary>
+        /// <summary>Firmware version currently running on the device at registration time.</summary>
         [MaxLength(50)]
         public string? CurrentFirmwareVersion { get; set; }
 
-        /// <summary>Categorisation tags (e.g., ["warehouse-zone-a"]).</summary>
-        public List<string> Tags { get; set; } = new();
-
-        /// <summary>Initial device metadata key-value pairs.</summary>
-        public Dictionary<string, string> Metadata { get; set; } = new();
+        /// <summary>
+        /// Custom MQTT publish topic for this device's registration event.
+        /// Defaults to OTA/{MacImeiIp}/Status when left blank.
+        /// </summary>
+        [MaxLength(200)]
+        public string? PublishTopic { get; set; }
     }
 
     /// <summary>Request body for updating mutable device attributes.</summary>
     public sealed class UpdateDeviceRequest
     {
-        /// <summary>Updated site identifier.</summary>
-        [MaxLength(36)]
-        public string? SiteId { get; set; }
+        /// <summary>Updated device model identifier.</summary>
+        [MaxLength(100)]
+        public string? Model { get; set; }
 
-        /// <summary>Updated site display name.</summary>
+        /// <summary>Updated current firmware version (manual override).</summary>
+        [MaxLength(50)]
+        public string? CurrentFirmwareVersion { get; set; }
+
+        /// <summary>
+        /// Updated MQTT publish topic for this device.
+        /// When provided, the platform re-publishes the device info to this topic.
+        /// </summary>
         [MaxLength(200)]
-        public string? SiteName { get; set; }
-
-        /// <summary>Replacement tags list.</summary>
-        public List<string>? Tags { get; set; }
-
-        /// <summary>Replacement metadata dictionary.</summary>
-        public Dictionary<string, string>? Metadata { get; set; }
-
-        /// <summary>Updated device status (e.g., to suspend or reactivate).</summary>
-        public DeviceStatus? Status { get; set; }
+        public string? PublishTopic { get; set; }
     }
 
     /// <summary>Request body sent by a device to report its current state (heartbeat).</summary>
@@ -174,14 +163,16 @@ namespace OTA.API.Models.DTOs
     /// <summary>Full device detail returned by GET /api/devices/{deviceId}.</summary>
     public class DeviceDetailDto
     {
+        /// <summary>MongoDB ObjectId — used as the route key in /api/devices/{id}.</summary>
+        public string Id { get; set; } = string.Empty;
         public string DeviceId { get; set; } = string.Empty;
-        public string SerialNumber { get; set; } = string.Empty;
+        /// <summary>MAC address, IMEI, or IP used as the device identifier.</summary>
+        public string? MacImeiIp { get; set; }
+        /// <summary>Project the device belongs to.</summary>
+        public string? ProjectName { get; set; }
         public string Model { get; set; } = string.Empty;
-        public string? HardwareRevision { get; set; }
         public string CustomerId { get; set; } = string.Empty;
         public string CustomerName { get; set; } = string.Empty;
-        public string? SiteId { get; set; }
-        public string? SiteName { get; set; }
         public string? CurrentFirmwareVersion { get; set; }
         public string? PreviousFirmwareVersion { get; set; }
         public string Status { get; set; } = string.Empty;
@@ -191,6 +182,22 @@ namespace OTA.API.Models.DTOs
         public string? RegisteredByUserId { get; set; }
         public List<string> Tags { get; set; } = new();
         public Dictionary<string, string> Metadata { get; set; } = new();
+
+        /// <summary>
+        /// MQTT topic used to publish registration / update events for this device.
+        /// Defaults to OTA/{SerialNumber}/Status when not explicitly set.
+        /// </summary>
+        public string? PublishTopic { get; set; }
+
+        // ── Live OTA progress (updated via MQTT status packets) ───────────────
+        /// <summary>Last OTA status reported by the device (start | inprogress | success | failed | rollback).</summary>
+        public string? OtaStatus { get; set; }
+        /// <summary>Download/install progress percentage 0–100.</summary>
+        public int OtaProgress { get; set; }
+        /// <summary>Firmware version the device is updating to.</summary>
+        public string? OtaTargetVersion { get; set; }
+        /// <summary>UTC timestamp of the last OTA status packet.</summary>
+        public DateTime? OtaUpdatedAt { get; set; }
     }
 
     /// <summary>Wrapper for paginated device list responses.</summary>
@@ -201,5 +208,102 @@ namespace OTA.API.Models.DTOs
         public int PageSize { get; set; }
         public long TotalCount { get; set; }
         public int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+    }
+
+    /// <summary>Request body for registering multiple devices in a single call.</summary>
+    public sealed class BulkRegisterDeviceRequest
+    {
+        /// <summary>List of devices to register. Must contain at least one entry.</summary>
+        [Required]
+        [MinLength(1, ErrorMessage = "At least one device is required.")]
+        public List<RegisterDeviceRequest> Devices { get; set; } = new();
+    }
+
+    /// <summary>Per-row error detail returned when a single device in a bulk request fails.</summary>
+    public sealed class BulkRegisterError
+    {
+        /// <summary>1-based row number in the uploaded file.</summary>
+        public int Row { get; set; }
+        /// <summary>MAC/IMEI/IP used to identify the failing row.</summary>
+        public string Identifier { get; set; } = string.Empty;
+        /// <summary>Human-readable error message.</summary>
+        public string Error { get; set; } = string.Empty;
+    }
+
+    /// <summary>Summary result returned by the bulk-register endpoint.</summary>
+    public sealed class BulkRegisterResult
+    {
+        public int Total { get; set; }
+        public int Succeeded { get; set; }
+        public int Failed { get; set; }
+        public List<BulkRegisterError> Errors { get; set; } = new();
+    }
+
+    /// <summary>Request body to push a specific firmware version to a device.</summary>
+    public sealed class PushFirmwareRequest
+    {
+        /// <summary>The MongoDB ObjectId of the firmware version to push.</summary>
+        [Required(ErrorMessage = "FirmwareVersionId is required.")]
+        public string FirmwareVersionId { get; set; } = string.Empty;
+    }
+
+    /// <summary>Available firmware version that can be pushed to a specific device.</summary>
+    public sealed class AvailableFirmwareDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public string Channel { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string? ReleaseNotes { get; set; }
+        public bool IsMandate { get; set; }
+        public string? DownloadUrl { get; set; }
+        public long FileSizeBytes { get; set; }
+        public string? ApprovedAt { get; set; }
+        public List<string> SupportedModels { get; set; } = new();
+    }
+
+    /// <summary>Single entry in a device's OTA update history.</summary>
+    public sealed class DeviceOtaHistoryItemDto
+    {
+        public string Id { get; set; } = string.Empty;
+        /// <summary>Rollout job ID — only set for Rollout-sourced entries.</summary>
+        public string? RolloutId { get; set; }
+        /// <summary>Human-readable rollout name — only set for Rollout-sourced entries.</summary>
+        public string? RolloutName { get; set; }
+        public string FirmwareVersion { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        /// <summary>Download/install progress percentage 0–100.</summary>
+        public int Progress { get; set; }
+        /// <summary>"MQTT" for device-initiated events, "Rollout" for platform-managed jobs.</summary>
+        public string Source { get; set; } = "Rollout";
+        public DateTime? CompletedAt { get; set; }
+        /// <summary>When this event was recorded (used for sorting and display).</summary>
+        public DateTime Timestamp { get; set; }
+    }
+
+    /// <summary>Lightweight device record returned by the public OTA-ready endpoint (no auth required).</summary>
+    public sealed class OtaReadyDeviceDto
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string SerialNumber { get; set; } = string.Empty;
+        public string MacImeiIp { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string ProjectName { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string CurrentFirmwareVersion { get; set; } = string.Empty;
+        public string PublishTopic { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public DateTime? LastHeartbeatAt { get; set; }
+        public DateTime RegisteredAt { get; set; }
+
+        // ── OTA Status ────────────────────────────────────────────────────────
+        /// <summary>Last OTA lifecycle status reported by the device (start | inprogress | success | failed | rollback). Null if no OTA attempted.</summary>
+        public string? OtaStatus { get; set; }
+        /// <summary>Download/install progress percentage 0–100.</summary>
+        public int OtaProgress { get; set; }
+        /// <summary>Firmware version the device is currently updating to.</summary>
+        public string? OtaTargetVersion { get; set; }
+        /// <summary>UTC timestamp of the last OTA status packet received from the device.</summary>
+        public DateTime? OtaUpdatedAt { get; set; }
     }
 }

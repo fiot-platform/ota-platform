@@ -91,6 +91,23 @@ namespace OTA.API.Models.DTOs
 
         /// <summary>UTC timestamp of the most recent update.</summary>
         public DateTime UpdatedAt { get; set; }
+
+        /// <summary>UTC timestamp of the user's most recent successful login. Null if never logged in.</summary>
+        public DateTime? LastLoginAt { get; set; }
+    }
+
+    /// <summary>Request body for the POST /api/auth/change-password endpoint (self-service).</summary>
+    public sealed class ChangeMyPasswordRequest
+    {
+        /// <summary>The user's current password for verification.</summary>
+        [Required(ErrorMessage = "Current password is required.")]
+        public string CurrentPassword { get; set; } = string.Empty;
+
+        /// <summary>The desired new password.</summary>
+        [Required(ErrorMessage = "New password is required.")]
+        [MinLength(6, ErrorMessage = "Password must be at least 6 characters.")]
+        [MaxLength(128)]
+        public string NewPassword { get; set; } = string.Empty;
     }
 
 }

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using OTA.API.Helpers;
 using OTA.API.Models.DTOs;
 using OTA.API.Services.Interfaces;
+using System.Collections.Generic;
 
 namespace OTA.API.Controllers
 {
@@ -18,11 +19,13 @@ namespace OTA.API.Controllers
     public class ProjectController : ControllerBase
     {
         private readonly IProjectService _projectService;
+        private readonly IUserService _userService;
         private readonly ILogger<ProjectController> _logger;
 
-        public ProjectController(IProjectService projectService, ILogger<ProjectController> logger)
+        public ProjectController(IProjectService projectService, IUserService userService, ILogger<ProjectController> logger)
         {
             _projectService = projectService ?? throw new ArgumentNullException(nameof(projectService));
+            _userService    = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger         = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -44,9 +47,22 @@ namespace OTA.API.Controllers
             [FromQuery] int pageSize = 25,
             CancellationToken cancellationToken = default)
         {
-            var result = await _projectService.GetProjectsAsync(filter ?? string.Empty, page, pageSize, cancellationToken);
+            var allowedProjectIds = await GetProjectScopeAsync(cancellationToken);
+            var result = await _projectService.GetProjectsAsync(filter ?? string.Empty, page, pageSize, allowedProjectIds, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
             return Ok(ApiResponse<List<ProjectDto>>.Ok(result.Items, "Projects retrieved successfully.", pagination));
+        }
+
+        private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
+        {
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+            if (role is "SuperAdmin" or "PlatformAdmin") return null;
+
+            var userId = CurrentUserId;
+            if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
+
+            var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            return user?.ProjectScope ?? new List<string>();
         }
 
         /// <summary>Returns a single project by its identifier.</summary>
@@ -112,6 +128,17 @@ namespace OTA.API.Controllers
         {
             await _projectService.ActivateProjectAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData("Project activated successfully."));
+        }
+
+        /// <summary>Permanently deletes a project. SuperAdmin only.</summary>
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "SuperAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DeleteProject(string id, CancellationToken cancellationToken = default)
+        {
+            await _projectService.DeleteProjectAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse.OkNoData("Project deleted successfully."));
         }
 
         /// <summary>Deactivates a project. SuperAdmin and PlatformAdmin only.</summary>

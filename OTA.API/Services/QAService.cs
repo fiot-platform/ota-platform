@@ -12,16 +12,19 @@ namespace OTA.API.Services
     {
         private readonly IQASessionRepository _qaRepo;
         private readonly IFirmwareRepository _firmwareRepo;
+        private readonly INotificationService _notificationService;
         private readonly ILogger<QAService> _logger;
 
         public QAService(
             IQASessionRepository qaRepo,
             IFirmwareRepository firmwareRepo,
+            INotificationService notificationService,
             ILogger<QAService> logger)
         {
-            _qaRepo       = qaRepo;
-            _firmwareRepo = firmwareRepo;
-            _logger       = logger;
+            _qaRepo              = qaRepo;
+            _firmwareRepo        = firmwareRepo;
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _logger              = logger;
         }
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -32,7 +35,7 @@ namespace OTA.API.Services
             return session is null ? null : ToDto(session);
         }
 
-        public async Task<QASessionDto> StartSessionAsync(string firmwareId, string userId, CancellationToken cancellationToken = default)
+        public async Task<QASessionDto> StartSessionAsync(string firmwareId, string userId, string? userName = null, CancellationToken cancellationToken = default)
         {
             var existing = await _qaRepo.GetByFirmwareIdAsync(firmwareId, cancellationToken);
             if (existing is not null)
@@ -48,6 +51,7 @@ namespace OTA.API.Services
                 Status            = QASessionStatus.NotStarted,
                 StartedAt         = now,
                 StartedByUserId   = userId,
+                StartedByName     = !string.IsNullOrWhiteSpace(userName) ? userName : null,
                 CreatedByUserId   = userId,
                 CreatedAt         = now,
                 UpdatedAt         = now,
@@ -66,6 +70,13 @@ namespace OTA.API.Services
 
             await _qaRepo.InsertAsync(session, cancellationToken);
             _logger.LogInformation("QA session started for firmware {FirmwareId} by {UserId}.", firmwareId, userId);
+
+            _ = _notificationService.NotifyAsync(
+                "QA Session Started",
+                $"QA session started for firmware '{firmware.Version}' (ID: {firmwareId}).",
+                new Dictionary<string, string> { ["type"] = "qa_session_started", ["firmwareId"] = firmwareId, ["version"] = firmware.Version },
+                cancellationToken: CancellationToken.None);
+
             return ToDto(session);
         }
 
@@ -212,6 +223,12 @@ namespace OTA.API.Services
                 }
             }, cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "QA Bug Raised",
+                $"[{bug.Severity}] Bug raised: {bug.Title}",
+                new Dictionary<string, string> { ["type"] = "qa_bug_raised", ["firmwareId"] = firmwareId, ["bugId"] = bug.BugId, ["severity"] = bug.Severity.ToString() },
+                cancellationToken: CancellationToken.None);
+
             return ToDto(await _qaRepo.GetByFirmwareIdAsync(firmwareId, cancellationToken) ?? session);
         }
 
@@ -275,6 +292,12 @@ namespace OTA.API.Services
                 }
             }, cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "QA Session Completed",
+                $"QA session for firmware '{firmwareId}' finalized with status: {request.FinalStatus}.",
+                new Dictionary<string, string> { ["type"] = "qa_session_completed", ["firmwareId"] = firmwareId, ["status"] = request.FinalStatus.ToString() },
+                cancellationToken: CancellationToken.None);
+
             return ToDto(await _qaRepo.GetByFirmwareIdAsync(firmwareId, cancellationToken) ?? session);
         }
 
@@ -315,6 +338,7 @@ namespace OTA.API.Services
             EventLog           = s.EventLog.OrderByDescending(e => e.Timestamp).Select(EventToDto).ToList(),
             StartedAt          = s.StartedAt,
             StartedByUserId    = s.StartedByUserId,
+            StartedByName      = s.StartedByName,
             CompletedAt        = s.CompletedAt,
             Remarks            = s.Remarks,
             CreatedAt          = s.CreatedAt,

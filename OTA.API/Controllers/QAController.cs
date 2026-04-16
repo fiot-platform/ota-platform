@@ -18,16 +18,21 @@ namespace OTA.API.Controllers
     public class QAController : ControllerBase
     {
         private readonly IQAService _qaService;
+        private readonly IUserService _userService;
         private readonly ILogger<QAController> _logger;
 
-        public QAController(IQAService qaService, ILogger<QAController> logger)
+        public QAController(IQAService qaService, IUserService userService, ILogger<QAController> logger)
         {
-            _qaService = qaService;
-            _logger    = logger;
+            _qaService   = qaService;
+            _userService = userService;
+            _logger      = logger;
         }
 
         private string CurrentUserId =>
             User.FindFirstValue("userId") ?? User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+
+        private string CurrentName =>
+            User.FindFirstValue("fullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
 
         private string BaseUrl =>
             $"{Request.Scheme}://{Request.Host}";
@@ -41,23 +46,39 @@ namespace OTA.API.Controllers
             var session = await _qaService.GetSessionAsync(firmwareId, cancellationToken);
             if (session is null)
                 return NotFound(ApiResponse<QASessionDto>.Fail($"No QA session found for firmware '{firmwareId}'."));
+
+            // Enrich StartedByName for sessions that predate the denormalised name field.
+            if (string.IsNullOrWhiteSpace(session.StartedByName) && !string.IsNullOrWhiteSpace(session.StartedByUserId))
+            {
+                try
+                {
+                    var user = await _userService.GetUserByIdAsync(session.StartedByUserId, cancellationToken);
+                    if (user != null)
+                        session.StartedByName = !string.IsNullOrWhiteSpace(user.Name) ? user.Name : user.Email;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not enrich QA session starter name for userId={UserId}", session.StartedByUserId);
+                }
+            }
+
             return Ok(ApiResponse<QASessionDto>.Ok(session));
         }
 
         /// <summary>Starts a new QA session for the firmware version. QA engineers only.</summary>
         [HttpPost("start")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<QASessionDto>), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> StartSession(string firmwareId, CancellationToken cancellationToken = default)
         {
-            var session = await _qaService.StartSessionAsync(firmwareId, CurrentUserId, cancellationToken);
+            var session = await _qaService.StartSessionAsync(firmwareId, CurrentUserId, CurrentName, cancellationToken);
             return StatusCode(201, ApiResponse<QASessionDto>.Ok(session, "QA session started."));
         }
 
         /// <summary>Updates the QA session status (InProgress, BugListRaised, Complete, Fail).</summary>
         [HttpPut("status")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<QASessionDto>), StatusCodes.Status200OK)]
         public async Task<IActionResult> UpdateStatus(string firmwareId, [FromBody] UpdateQAStatusRequest request, CancellationToken cancellationToken = default)
         {
@@ -74,7 +95,7 @@ namespace OTA.API.Controllers
         /// Max 50 MB per file.
         /// </summary>
         [HttpPost("documents")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [RequestSizeLimit(52_428_800)]
         [RequestFormLimits(MultipartBodyLengthLimit = 52_428_800)]
         [Consumes("multipart/form-data")]
@@ -95,7 +116,7 @@ namespace OTA.API.Controllers
 
         /// <summary>Removes a document (test case or test result) from the QA session.</summary>
         [HttpDelete("documents/{documentId}")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> RemoveDocument(string firmwareId, string documentId, CancellationToken cancellationToken = default)
@@ -106,7 +127,7 @@ namespace OTA.API.Controllers
 
         /// <summary>Adds a new bug to the QA session bug list.</summary>
         [HttpPost("bugs")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<QASessionDto>), StatusCodes.Status200OK)]
         public async Task<IActionResult> AddBug(string firmwareId, [FromBody] AddBugRequest request, CancellationToken cancellationToken = default)
         {
@@ -119,7 +140,7 @@ namespace OTA.API.Controllers
 
         /// <summary>Updates an existing bug's status, severity, or resolution.</summary>
         [HttpPut("bugs/{bugId}")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<QASessionDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> UpdateBug(string firmwareId, string bugId, [FromBody] UpdateBugRequest request, CancellationToken cancellationToken = default)
@@ -130,7 +151,7 @@ namespace OTA.API.Controllers
 
         /// <summary>Finalizes the QA session as Complete or Fail.</summary>
         [HttpPost("complete")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<QASessionDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> CompleteSession(string firmwareId, [FromBody] CompleteQARequest request, CancellationToken cancellationToken = default)

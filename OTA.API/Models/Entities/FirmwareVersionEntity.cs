@@ -214,6 +214,11 @@ namespace OTA.API.Models.Entities
         [BsonElement("createdByUserId")]
         public string CreatedByUserId { get; set; } = string.Empty;
 
+        /// <summary>Display name of the user who created this record (denormalised at creation time).</summary>
+        [BsonElement("createdByName")]
+        [BsonIgnoreIfNull]
+        public string? CreatedByName { get; set; }
+
         // ── Assets ────────────────────────────────────────────────────────────
 
         /// <summary>

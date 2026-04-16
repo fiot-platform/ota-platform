@@ -12,7 +12,7 @@ export const projectService = {
     params?: { search?: string; customerId?: string; isActive?: boolean; page?: number; pageSize?: number }
   ): Promise<PaginatedResponse<Project>> {
     const searchParams = new URLSearchParams()
-    if (params?.search) searchParams.set('search', params.search)
+    if (params?.search) searchParams.set('filter', params.search)
     if (params?.customerId) searchParams.set('customerId', params.customerId)
     if (params?.isActive !== undefined) searchParams.set('isActive', String(params.isActive))
     if (params?.page) searchParams.set('page', String(params.page))

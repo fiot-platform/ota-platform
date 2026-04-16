@@ -1,6 +1,23 @@
-import type { NextConfig } from 'next'
+// @ts-check
+const withPWAInit = require('@ducanh2912/next-pwa').default
 
-const nextConfig: NextConfig = {
+const withPWA = withPWAInit({
+  dest: 'public',
+  cacheOnFrontEndNav: true,
+  aggressiveFrontEndNavCaching: true,
+  reloadOnOnline: true,
+  disable: process.env.NODE_ENV === 'development',
+  dynamicStartUrlRedirect: '/login',
+  fallbacks: {
+    document: '/offline',
+  },
+  workboxOptions: {
+    disableDevLogs: true,
+  },
+})
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
   images: {
     domains: [
@@ -54,4 +71,4 @@ const nextConfig: NextConfig = {
   },
 }
 
-export default nextConfig
+module.exports = withPWA(nextConfig)

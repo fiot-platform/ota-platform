@@ -2,21 +2,28 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, RefreshCw, Eye, PauseCircle, XCircle } from 'lucide-react'
+import { Search, RefreshCw, Eye, PauseCircle, XCircle, Plus, FileSpreadsheet, Pencil } from 'lucide-react'
 import Link from 'next/link'
 import { deviceService } from '@/services/device.service'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { DataTable, Column } from '@/components/ui/DataTable'
 import { StatusBadge } from '@/components/ui/Badge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { RegisterDeviceForm } from '@/components/forms/RegisterDeviceForm'
+import { EditDeviceForm } from '@/components/forms/EditDeviceForm'
+import { BulkDeviceUploadForm } from '@/components/forms/BulkDeviceUploadForm'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { useToast } from '@/components/ui/ToastProvider'
-import { Device, DeviceStatus } from '@/types'
+import { Device, DeviceStatus, UpdateDeviceRequest } from '@/types'
 import { formatRelativeTime, formatVersion } from '@/utils/formatters'
+import { OtaProgressCell } from '@/components/ui/OtaProgressCell'
+import { useProjectScope } from '@/hooks/useProjectScope'
+import { ProjectScopeBanner } from '@/components/ui/ProjectScopeBanner'
 
 export default function DevicesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { scopedProjectId, scopedProjectName, isScoped } = useProjectScope()
 
   const [search, setSearch] = React.useState('')
   const [statusFilter, setStatusFilter] = React.useState('')
@@ -24,15 +31,28 @@ export default function DevicesPage() {
   const [pageSize, setPageSize] = React.useState(25)
   const [suspendTarget, setSuspendTarget] = React.useState<Device | null>(null)
   const [decommissionTarget, setDecommissionTarget] = React.useState<Device | null>(null)
+  const [editTarget, setEditTarget] = React.useState<Device | null>(null)
+  const [registerOpen, setRegisterOpen] = React.useState(false)
+  const [bulkOpen, setBulkOpen] = React.useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['devices', { search, status: statusFilter, page, pageSize }],
+    queryKey: ['devices', { search, status: statusFilter, projectId: isScoped ? scopedProjectId : undefined, page, pageSize }],
     queryFn: () => deviceService.getDevices({
       search,
       status: (statusFilter as DeviceStatus) || undefined,
+      projectId: isScoped ? (scopedProjectId ?? undefined) : undefined,
       page,
       pageSize,
     }),
+    // Always poll every 30 s so new OTA status is picked up automatically.
+    // Drops to 5 s while any device has an active OTA in progress.
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? []
+      const hasActiveOta = items.some(
+        (d) => d.otaStatus === 'start' || d.otaStatus === 'inprogress'
+      )
+      return hasActiveOta ? 5000 : 30000
+    },
   })
 
   const suspendMutation = useMutation({
@@ -55,6 +75,49 @@ export default function DevicesPage() {
     onError: () => toast({ title: 'Failed to decommission device', variant: 'error' }),
   })
 
+  const registerMutation = useMutation({
+    mutationFn: deviceService.registerDevice,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      toast({ title: 'Device registered successfully', variant: 'success' })
+      setRegisterOpen(false)
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.message || 'Failed to register device'
+      toast({ title: msg, variant: 'error' })
+    },
+  })
+
+  const editMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateDeviceRequest }) =>
+      deviceService.updateDevice(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      toast({ title: 'Device updated successfully', variant: 'success' })
+      setEditTarget(null)
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.message || 'Failed to update device'
+      toast({ title: msg, variant: 'error' })
+    },
+  })
+
+  const bulkMutation = useMutation({
+    mutationFn: deviceService.bulkRegisterDevices,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      if (result.failed === 0) {
+        toast({ title: `${result.succeeded} device(s) registered successfully`, variant: 'success' })
+      } else {
+        toast({ title: `${result.succeeded} registered, ${result.failed} failed`, variant: 'warning' })
+      }
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.message || 'Bulk upload failed'
+      toast({ title: msg, variant: 'error' })
+    },
+  })
+
   const isOnline = (lastHeartbeat?: string) => {
     if (!lastHeartbeat) return false
     const diff = Date.now() - new Date(lastHeartbeat).getTime()
@@ -63,44 +126,51 @@ export default function DevicesPage() {
 
   const columns: Column<Device>[] = [
     {
-      key: 'serialNumber',
-      header: 'Serial Number',
+      key: 'macImeiIp',
+      header: 'MAC / IMEI / IP',
       cell: (row) => (
         <div>
           <Link
             href={`/devices/${row.id}`}
             className="font-mono font-semibold text-accent-600 hover:text-accent-700 transition-colors text-sm"
           >
-            {row.serialNumber}
+            {row.macImeiIp ?? '—'}
           </Link>
           <p className="text-xs text-slate-500 mt-0.5">{row.customerName ?? row.customerId}</p>
         </div>
       ),
     },
     {
+      key: 'projectName',
+      header: 'Project',
+      cell: (row) => (
+        <span className="text-sm text-primary-800">{row.projectName ?? '—'}</span>
+      ),
+    },
+    {
       key: 'model',
       header: 'Model',
       cell: (row) => (
-        <div>
-          <p className="text-sm font-medium text-primary-800">{row.model}</p>
-          {row.hardwareRevision && (
-            <p className="text-xs text-slate-500">HW Rev: {row.hardwareRevision}</p>
-          )}
-        </div>
+        <span className="text-sm font-medium text-primary-800">{row.model}</span>
       ),
     },
     {
       key: 'firmware',
-      header: 'Current Firmware',
+      header: 'Initial Firmware',
       cell: (row) => (
         row.currentFirmwareVersion ? (
           <code className="text-xs bg-slate-100 px-2 py-0.5 rounded text-accent-700 font-semibold">
             {formatVersion(row.currentFirmwareVersion)}
           </code>
         ) : (
-          <span className="text-xs text-slate-400">Not set</span>
+          <span className="text-xs text-slate-400">0.0.0</span>
         )
       ),
+    },
+    {
+      key: 'otaProgress',
+      header: 'OTA Progress',
+      cell: (row) => <OtaProgressCell device={row} />,
     },
     {
       key: 'status',
@@ -122,13 +192,6 @@ export default function DevicesPage() {
       ),
     },
     {
-      key: 'site',
-      header: 'Site',
-      cell: (row) => (
-        <span className="text-sm text-slate-600">{row.siteName ?? row.siteId ?? '—'}</span>
-      ),
-    },
-    {
       key: 'actions',
       header: 'Actions',
       cell: (row) => (
@@ -141,6 +204,13 @@ export default function DevicesPage() {
             <Eye className="w-4 h-4" />
           </Link>
           <RoleGuard module="Devices" action="update">
+            <button
+              onClick={() => setEditTarget(row)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
+              title="Edit"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
             {row.status === DeviceStatus.Active && (
               <button
                 onClick={() => setSuspendTarget(row)}
@@ -171,7 +241,24 @@ export default function DevicesPage() {
         title="Devices"
         subtitle="Monitor and manage registered IoT devices"
         breadcrumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Devices' }]}
+        actions={
+          <RoleGuard module="Devices" action="create">
+            <button onClick={() => setBulkOpen(true)} className="btn-secondary">
+              <FileSpreadsheet className="w-4 h-4" />
+              Bulk Upload
+            </button>
+            <button onClick={() => setRegisterOpen(true)} className="btn-primary">
+              <Plus className="w-4 h-4" />
+              Register Device
+            </button>
+          </RoleGuard>
+        }
       />
+
+      {/* Project scope banner — QA users only */}
+      {isScoped && scopedProjectId && (
+        <ProjectScopeBanner projectId={scopedProjectId} projectName={scopedProjectName} />
+      )}
 
       {/* Filters */}
       <div className="filter-bar">
@@ -204,6 +291,12 @@ export default function DevicesPage() {
           <RefreshCw className="w-4 h-4" />
           Refresh
         </button>
+        {data?.items.some((d) => d.otaStatus === 'start' || d.otaStatus === 'inprogress') && (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-accent-600 bg-accent-50 border border-accent-200 px-2.5 py-1.5 rounded-lg">
+            <span className="w-2 h-2 rounded-full bg-accent-500 animate-pulse" />
+            OTA in progress — auto-refreshing
+          </span>
+        )}
       </div>
 
       {/* Table */}
@@ -217,6 +310,47 @@ export default function DevicesPage() {
         keyExtractor={(r) => r.id}
         emptyMessage="No devices registered"
       />
+
+      {/* Bulk Upload Modal */}
+      <BulkDeviceUploadForm
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        onUpload={async (devices) => {
+          const result = await bulkMutation.mutateAsync(devices)
+          return result
+        }}
+        isLoading={bulkMutation.isPending}
+      />
+
+      {/* Register Device Modal */}
+      <RegisterDeviceForm
+        open={registerOpen}
+        onOpenChange={setRegisterOpen}
+        onSubmit={async (data) => {
+          await registerMutation.mutateAsync({
+            projectName: data.projectName,
+            customerCode: data.customerCode,
+            macImeiIp: data.macImeiIp,
+            model: data.model,
+            currentFirmwareVersion: data.currentFirmwareVersion || undefined,
+            publishTopic: data.publishTopic || undefined,
+          })
+        }}
+        isLoading={registerMutation.isPending}
+      />
+
+      {/* Edit Device Modal */}
+      {editTarget && (
+        <EditDeviceForm
+          open={Boolean(editTarget)}
+          onOpenChange={(open) => !open && setEditTarget(null)}
+          device={editTarget}
+          onSubmit={async (data) => {
+            await editMutation.mutateAsync({ id: editTarget.id, data })
+          }}
+          isLoading={editMutation.isPending}
+        />
+      )}
 
       {/* Suspend Confirm */}
       <ConfirmDialog

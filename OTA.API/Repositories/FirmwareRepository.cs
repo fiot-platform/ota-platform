@@ -138,23 +138,36 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<List<FirmwareVersionEntity>> GetApprovedForModelAsync(string model, string hardwareRevision, FirmwareChannel channel, CancellationToken cancellationToken = default)
+        public async Task<List<FirmwareVersionEntity>> GetApprovedForModelAsync(string model, string? hardwareRevision, FirmwareChannel? channel, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(model))
-                throw new ArgumentException("Model must not be null or empty.", nameof(model));
-            if (string.IsNullOrWhiteSpace(hardwareRevision))
-                throw new ArgumentException("HardwareRevision must not be null or empty.", nameof(hardwareRevision));
-
             try
             {
-                var filter = Builders<FirmwareVersionEntity>.Filter.And(
-                    Builders<FirmwareVersionEntity>.Filter.Eq(f => f.Status, FirmwareStatus.Approved),
-                    Builders<FirmwareVersionEntity>.Filter.Eq(f => f.Channel, channel),
-                    Builders<FirmwareVersionEntity>.Filter.AnyEq(f => f.SupportedModels, model),
-                    Builders<FirmwareVersionEntity>.Filter.AnyEq(f => f.SupportedHardwareRevisions, hardwareRevision)
-                );
+                var filters = new List<FilterDefinition<FirmwareVersionEntity>>
+                {
+                    Builders<FirmwareVersionEntity>.Filter.Eq(f => f.Status, FirmwareStatus.Approved)
+                };
 
-                return await Collection.Find(filter)
+                // Channel filter — only apply if a specific channel is requested
+                if (channel.HasValue)
+                    filters.Add(Builders<FirmwareVersionEntity>.Filter.Eq(f => f.Channel, channel.Value));
+
+                // Model filter — empty SupportedModels list means compatible with all models
+                if (!string.IsNullOrWhiteSpace(model))
+                    filters.Add(Builders<FirmwareVersionEntity>.Filter.Or(
+                        Builders<FirmwareVersionEntity>.Filter.Size(f => f.SupportedModels, 0),
+                        Builders<FirmwareVersionEntity>.Filter.AnyEq(f => f.SupportedModels, model)
+                    ));
+
+                // Hardware revision filter — empty list or null revision means compatible with all
+                if (!string.IsNullOrWhiteSpace(hardwareRevision))
+                    filters.Add(Builders<FirmwareVersionEntity>.Filter.Or(
+                        Builders<FirmwareVersionEntity>.Filter.Size(f => f.SupportedHardwareRevisions, 0),
+                        Builders<FirmwareVersionEntity>.Filter.AnyEq(f => f.SupportedHardwareRevisions, hardwareRevision)
+                    ));
+
+                var combinedFilter = Builders<FirmwareVersionEntity>.Filter.And(filters);
+
+                return await Collection.Find(combinedFilter)
                     .SortByDescending(f => f.CreatedAt)
                     .ToListAsync(cancellationToken);
             }
@@ -210,6 +223,7 @@ namespace OTA.API.Repositories
             string? repositoryId,
             int page,
             int pageSize,
+            List<string>? allowedProjectIds = null,
             CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
@@ -245,6 +259,10 @@ namespace OTA.API.Repositories
             if (!string.IsNullOrWhiteSpace(repositoryId))
                 filters.Add(Builders<FirmwareVersionEntity>.Filter.Eq(f => f.RepositoryId, repositoryId));
 
+            // null = no restriction; empty list = no projects allowed (return nothing)
+            if (allowedProjectIds != null)
+                filters.Add(Builders<FirmwareVersionEntity>.Filter.In(f => f.ProjectId, allowedProjectIds));
+
             var mongoFilter = filters.Count > 0
                 ? Builders<FirmwareVersionEntity>.Filter.And(filters)
                 : Builders<FirmwareVersionEntity>.Filter.Empty;
@@ -279,7 +297,10 @@ namespace OTA.API.Repositories
                 var dict = new Dictionary<FirmwareStatus, long>();
                 foreach (var doc in results)
                 {
-                    if (Enum.TryParse<FirmwareStatus>(doc["_id"].AsString, out var status))
+                    var idValue = doc["_id"];
+                    // Skip documents where status field is null in MongoDB
+                    if (idValue == null || idValue.IsBsonNull) continue;
+                    if (Enum.TryParse<FirmwareStatus>(idValue.AsString, out var status))
                     {
                         dict[status] = doc["count"].AsInt64;
                     }

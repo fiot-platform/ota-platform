@@ -36,6 +36,11 @@ namespace OTA.API.Services.Interfaces
         Task<UserDto> UpdateUserAsync(string userId, UpdateUserRequest request, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Permanently deletes a user account. SuperAdmin only.
+        /// </summary>
+        Task DeleteUserAsync(string userId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Soft-deactivates a user account, preventing login while preserving audit history.
         /// </summary>
         /// <param name="userId">The identifier of the user to deactivate.</param>
@@ -101,5 +106,26 @@ namespace OTA.API.Services.Interfaces
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>List of user DTOs with the specified role.</returns>
         Task<List<UserDto>> GetUsersByRoleAsync(UserRole role, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Replaces the user's project scope with the provided list of project IDs.
+        /// Logs an audit event capturing the before and after state.
+        /// </summary>
+        /// <param name="userId">The identifier of the user to update.</param>
+        /// <param name="projectIds">The new list of project IDs to assign. Empty list clears all restrictions.</param>
+        /// <param name="callerUserId">The identifier of the authenticated caller.</param>
+        /// <param name="callerEmail">The email of the authenticated caller for audit logging.</param>
+        /// <param name="callerRole">The role of the authenticated caller.</param>
+        /// <param name="ipAddress">The caller's IP address for audit context.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The updated user profile DTO.</returns>
+        Task<UserDto> AssignProjectsAsync(
+            string userId,
+            List<string> projectIds,
+            string callerUserId,
+            string callerEmail,
+            UserRole callerRole,
+            string ipAddress,
+            CancellationToken cancellationToken = default);
     }
 }

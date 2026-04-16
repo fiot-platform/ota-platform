@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, RefreshCw, Eye, FlaskConical, CheckCircle, XCircle, Archive, Plus, Pencil } from 'lucide-react'
+import { Search, RefreshCw, Eye, CheckCircle, Archive, Plus, Pencil, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { firmwareService } from '@/services/firmware.service'
 import { projectService } from '@/services/project.service'
@@ -12,20 +12,27 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { ApproveFirmwareDialog } from '@/components/dialogs/ApproveFirmwareDialog'
-import { RejectFirmwareDialog } from '@/components/dialogs/RejectFirmwareDialog'
-import { QAVerifyDialog } from '@/components/dialogs/QAVerifyDialog'
 import { CreateFirmwareForm, EditFirmwareForm } from '@/components/forms/FirmwareForm'
 import { useToast } from '@/components/ui/ToastProvider'
 import { FirmwareVersion, FirmwareStatus, FirmwareChannel, CreateFirmwareRequest, UpdateFirmwareRequest } from '@/types'
 import { formatFileSize, formatDate } from '@/utils/formatters'
 import { UserRole } from '@/types'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function FirmwarePage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { role } = useAuth()
+  const canFilterByProject = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
+  const canSeeAllStatuses = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
+    || role === UserRole.ReleaseManager || role === UserRole.QA
 
   const [search, setSearch] = React.useState('')
-  const [statusFilter, setStatusFilter] = React.useState('')
+  const [statusFilter, setStatusFilter] = React.useState(() =>
+    (role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
+      || role === UserRole.ReleaseManager || role === UserRole.QA)
+      ? '' : FirmwareStatus.Approved
+  )
   const [channelFilter, setChannelFilter] = React.useState('')
   const [projectFilter, setProjectFilter] = React.useState('')
   const [page, setPage] = React.useState(1)
@@ -34,9 +41,8 @@ export default function FirmwarePage() {
   const [createOpen, setCreateOpen] = React.useState(false)
   const [editTarget, setEditTarget] = React.useState<FirmwareVersion | null>(null)
   const [approveTarget, setApproveTarget] = React.useState<FirmwareVersion | null>(null)
-  const [rejectTarget, setRejectTarget] = React.useState<FirmwareVersion | null>(null)
-  const [qaTarget, setQaTarget] = React.useState<FirmwareVersion | null>(null)
   const [deprecateTarget, setDeprecateTarget] = React.useState<FirmwareVersion | null>(null)
+  const [deleteTarget, setDeleteTarget] = React.useState<FirmwareVersion | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['firmware', { search, status: statusFilter, channel: channelFilter, projectId: projectFilter, page, pageSize }],
@@ -80,6 +86,16 @@ export default function FirmwarePage() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => firmwareService.deleteFirmware(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['firmware'] })
+      toast({ title: 'Firmware deleted', variant: 'success' })
+      setDeleteTarget(null)
+    },
+    onError: (err: any) => toast({ title: 'Failed to delete firmware', description: err?.response?.data?.message ?? 'Only Draft and Rejected firmware can be deleted', variant: 'error' }),
+  })
+
   const deprecateMutation = useMutation({
     mutationFn: (id: string) => firmwareService.deprecateFirmware(id),
     onSuccess: () => {
@@ -118,6 +134,28 @@ export default function FirmwarePage() {
       ),
     },
     {
+      key: 'models',
+      header: 'Models',
+      cell: (row) => {
+        const models = row.supportedModels ?? []
+        if (models.length === 0) return <span className="text-sm text-slate-400">—</span>
+        return (
+          <div className="flex flex-wrap gap-1">
+            {models.slice(0, 2).map((m) => (
+              <span key={m} className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-mono">
+                {m}
+              </span>
+            ))}
+            {models.length > 2 && (
+              <span className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-xs" title={models.slice(2).join(', ')}>
+                +{models.length - 2}
+              </span>
+            )}
+          </div>
+        )
+      },
+    },
+    {
       key: 'channel',
       header: 'Channel',
       cell: (row) => <StatusBadge status={row.channel} />,
@@ -130,9 +168,20 @@ export default function FirmwarePage() {
     {
       key: 'qa',
       header: 'QA',
-      cell: (row) => (
-        <StatusBadge status={row.isQaVerified ? 'QAVerified' : 'Pending'} />
-      ),
+      cell: (row) => {
+        if (row.qaSessionStatus) {
+          const s = row.qaSessionStatus
+          const label = s.replace(/([A-Z])/g, ' $1').trim()
+          const cls =
+            s === 'Complete'        ? 'bg-success-100 text-success-700' :
+            s === 'Fail'            ? 'bg-danger-100 text-danger-600' :
+            s === 'BugListRaised'   ? 'bg-warning-100 text-warning-700' :
+            s === 'InProgress'      ? 'bg-accent-100 text-accent-700' :
+                                      'bg-slate-100 text-slate-500'
+          return <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
+        }
+        return <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-400">Not Started</span>
+      },
     },
     {
       key: 'fileSize',
@@ -171,18 +220,6 @@ export default function FirmwarePage() {
             )}
           </RoleGuard>
 
-          <RoleGuard module="Firmware" action="approve" roles={[UserRole.QA, UserRole.PlatformAdmin, UserRole.SuperAdmin]}>
-            {!row.isQaVerified && [FirmwareStatus.PendingQA, FirmwareStatus.Draft].includes(row.status as FirmwareStatus) && (
-              <button
-                onClick={() => setQaTarget(row)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-accent-600 hover:bg-accent-50 transition-colors"
-                title="QA Verify"
-              >
-                <FlaskConical className="w-4 h-4" />
-              </button>
-            )}
-          </RoleGuard>
-
           <RoleGuard module="Firmware" action="approve" roles={[UserRole.ReleaseManager, UserRole.PlatformAdmin, UserRole.SuperAdmin]}>
             {[FirmwareStatus.PendingApproval, FirmwareStatus.QAVerified].includes(row.status as FirmwareStatus) && (
               <button
@@ -195,18 +232,6 @@ export default function FirmwarePage() {
             )}
           </RoleGuard>
 
-          <RoleGuard module="Firmware" action="approve" roles={[UserRole.ReleaseManager, UserRole.PlatformAdmin, UserRole.SuperAdmin]}>
-            {[FirmwareStatus.PendingApproval, FirmwareStatus.QAVerified, FirmwareStatus.PendingQA, FirmwareStatus.Draft].includes(row.status as FirmwareStatus) && (
-              <button
-                onClick={() => setRejectTarget(row)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
-                title="Reject"
-              >
-                <XCircle className="w-4 h-4" />
-              </button>
-            )}
-          </RoleGuard>
-
           <RoleGuard module="Firmware" action="update" roles={[UserRole.ReleaseManager, UserRole.PlatformAdmin, UserRole.SuperAdmin]}>
             {row.status === FirmwareStatus.Approved && (
               <button
@@ -215,6 +240,18 @@ export default function FirmwarePage() {
                 title="Deprecate"
               >
                 <Archive className="w-4 h-4" />
+              </button>
+            )}
+          </RoleGuard>
+
+          <RoleGuard module="Firmware" action="delete">
+            {[FirmwareStatus.Draft, FirmwareStatus.Rejected, FirmwareStatus.Deprecated].includes(row.status as FirmwareStatus) && (
+              <button
+                onClick={() => setDeleteTarget(row)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+                title="Delete"
+              >
+                <Trash2 className="w-4 h-4" />
               </button>
             )}
           </RoleGuard>
@@ -252,16 +289,23 @@ export default function FirmwarePage() {
           />
         </div>
 
-        <select
-          value={statusFilter}
-          onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
-          className="input w-auto"
-        >
-          <option value="">All Statuses</option>
-          {Object.values(FirmwareStatus).filter(s => s !== FirmwareStatus.Active).map((s) => (
-            <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>
-          ))}
-        </select>
+        {canSeeAllStatuses ? (
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
+            className="input w-auto"
+          >
+            <option value="">All Statuses</option>
+            {Object.values(FirmwareStatus).filter(s => s !== FirmwareStatus.Active).map((s) => (
+              <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>
+            ))}
+          </select>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success-50 border border-success-200 text-xs font-semibold text-success-700">
+            <CheckCircle className="w-3.5 h-3.5" />
+            Approved Only
+          </span>
+        )}
 
         <select
           value={channelFilter}
@@ -274,16 +318,18 @@ export default function FirmwarePage() {
           ))}
         </select>
 
-        <select
-          value={projectFilter}
-          onChange={(e) => { setProjectFilter(e.target.value); setPage(1) }}
-          className="input w-auto"
-        >
-          <option value="">All Projects</option>
-          {(projects?.items ?? []).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        {canFilterByProject && (
+          <select
+            value={projectFilter}
+            onChange={(e) => { setProjectFilter(e.target.value); setPage(1) }}
+            className="input w-auto"
+          >
+            <option value="">All Projects</option>
+            {(projects?.items ?? []).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        )}
 
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['firmware'] })}
@@ -319,9 +365,9 @@ export default function FirmwarePage() {
             channel: values.channel,
             releaseNotes: values.releaseNotes || undefined,
             fileName: values.fileName || undefined,
+            storedFileName: values.storedFileName || undefined,
             fileSha256: values.fileSha256 || undefined,
             fileSizeBytes: values.fileSizeBytes || 0,
-            downloadUrl: values.downloadUrl || undefined,
             isMandate: values.isMandate,
             minRequiredVersion: values.minRequiredVersion || undefined,
             maxAllowedVersion: values.maxAllowedVersion || undefined,
@@ -360,22 +406,6 @@ export default function FirmwarePage() {
         firmwareVersion={approveTarget?.version ?? ''}
       />
 
-      {/* Reject */}
-      <RejectFirmwareDialog
-        open={Boolean(rejectTarget)}
-        onOpenChange={(open) => !open && setRejectTarget(null)}
-        firmwareId={rejectTarget?.id ?? ''}
-        firmwareVersion={rejectTarget?.version ?? ''}
-      />
-
-      {/* QA Verify */}
-      <QAVerifyDialog
-        open={Boolean(qaTarget)}
-        onOpenChange={(open) => !open && setQaTarget(null)}
-        firmwareId={qaTarget?.id ?? ''}
-        firmwareVersion={qaTarget?.version ?? ''}
-      />
-
       {/* Deprecate */}
       <ConfirmDialog
         open={Boolean(deprecateTarget)}
@@ -386,6 +416,18 @@ export default function FirmwarePage() {
         variant="warning"
         onConfirm={() => deprecateTarget && deprecateMutation.mutate(deprecateTarget.id)}
         isLoading={deprecateMutation.isPending}
+      />
+
+      {/* Delete */}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete Firmware"
+        message={`Permanently delete firmware "${deleteTarget?.version}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        isLoading={deleteMutation.isPending}
       />
     </div>
   )

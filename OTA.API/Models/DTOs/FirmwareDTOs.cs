@@ -31,9 +31,16 @@ namespace OTA.API.Models.DTOs
         [MaxLength(10000)]
         public string? ReleaseNotes { get; set; }
 
-        /// <summary>Primary firmware binary file name.</summary>
+        /// <summary>Primary firmware binary file name (original upload name).</summary>
         [MaxLength(255)]
         public string? FileName { get; set; }
+
+        /// <summary>
+        /// Server-side stored file name returned by the upload endpoint (GUID-prefixed).
+        /// When provided, the API will push the file to the Gitea repository under the version folder.
+        /// </summary>
+        [MaxLength(512)]
+        public string? StoredFileName { get; set; }
 
         /// <summary>SHA-256 hex digest of the primary binary.</summary>
         [MaxLength(64)]
@@ -179,12 +186,18 @@ namespace OTA.API.Models.DTOs
         public string? MinRequiredVersion { get; set; }
         public string? MaxAllowedVersion { get; set; }
 
+        /// <summary>Current QA testing session status (from the linked QASession record). Null if no session started.</summary>
+        public string? QaSessionStatus { get; set; }
+
         // ── QA fields ────────────────────────────────────────────────────────────
         public DateTime? QaVerifiedAt { get; set; }
         public string? QaVerifiedByUserId { get; set; }
 
-        /// <summary>Frontend-friendly alias for QaVerifiedByUserId.</summary>
-        public string? QaVerifiedBy => QaVerifiedByUserId;
+        /// <summary>Display name of the user who QA-verified this firmware. Populated on single-fetch.</summary>
+        public string? QaVerifiedByName { get; set; }
+
+        /// <summary>Frontend-friendly alias — prefers enriched name, falls back to userId.</summary>
+        public string? QaVerifiedBy => QaVerifiedByName ?? QaVerifiedByUserId;
 
         public string? QaRemarks { get; set; }
 
@@ -195,8 +208,11 @@ namespace OTA.API.Models.DTOs
         public DateTime? ApprovedAt { get; set; }
         public string? ApprovedByUserId { get; set; }
 
-        /// <summary>Frontend-friendly alias for ApprovedByUserId.</summary>
-        public string? ApprovedBy => ApprovedByUserId;
+        /// <summary>Display name of the approver. Populated on single-fetch.</summary>
+        public string? ApprovedByName { get; set; }
+
+        /// <summary>Frontend-friendly alias — prefers enriched name, falls back to userId.</summary>
+        public string? ApprovedBy => ApprovedByName ?? ApprovedByUserId;
 
         public string? ApprovalNotes { get; set; }
 
@@ -204,8 +220,11 @@ namespace OTA.API.Models.DTOs
         public DateTime? RejectedAt { get; set; }
         public string? RejectedByUserId { get; set; }
 
-        /// <summary>Frontend-friendly alias for RejectedByUserId.</summary>
-        public string? RejectedBy => RejectedByUserId;
+        /// <summary>Display name of the rejector. Populated on single-fetch.</summary>
+        public string? RejectedByName { get; set; }
+
+        /// <summary>Frontend-friendly alias — prefers enriched name, falls back to userId.</summary>
+        public string? RejectedBy => RejectedByName ?? RejectedByUserId;
 
         public string? RejectionReason { get; set; }
 
@@ -213,6 +232,9 @@ namespace OTA.API.Models.DTOs
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         public string CreatedByUserId { get; set; } = string.Empty;
+
+        /// <summary>Enriched display name/email of the user who created this firmware. Populated on single-fetch.</summary>
+        public string? CreatedByName { get; set; }
 
         public List<GiteaAssetItemDto> GiteaAssets { get; set; } = new();
     }

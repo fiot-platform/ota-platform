@@ -43,7 +43,7 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged list of matching rollout entities.</returns>
-        Task<List<RolloutEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<List<RolloutEntity>> SearchAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Updates the status of the specified rollout.

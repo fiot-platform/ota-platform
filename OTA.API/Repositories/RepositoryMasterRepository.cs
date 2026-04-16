@@ -92,7 +92,7 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<List<RepositoryMasterEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default)
+        public async Task<List<RepositoryMasterEntity>> SearchAsync(string filter, int page, int pageSize, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
@@ -100,20 +100,24 @@ namespace OTA.API.Repositories
             try
             {
                 var skip = (page - 1) * pageSize;
-                FilterDefinition<RepositoryMasterEntity> mongoFilter;
+                var filters = new List<FilterDefinition<RepositoryMasterEntity>>();
 
-                if (string.IsNullOrWhiteSpace(filter))
-                {
-                    mongoFilter = Builders<RepositoryMasterEntity>.Filter.Empty;
-                }
-                else
+                if (!string.IsNullOrWhiteSpace(filter))
                 {
                     var regex = new MongoDB.Bson.BsonRegularExpression(filter, "i");
-                    mongoFilter = Builders<RepositoryMasterEntity>.Filter.Or(
+                    filters.Add(Builders<RepositoryMasterEntity>.Filter.Or(
                         Builders<RepositoryMasterEntity>.Filter.Regex(r => r.GiteaRepoName, regex),
                         Builders<RepositoryMasterEntity>.Filter.Regex(r => r.GiteaUrl, regex)
-                    );
+                    ));
                 }
+
+                // null = no restriction; empty list = no projects allowed (return nothing)
+                if (allowedProjectIds != null)
+                    filters.Add(Builders<RepositoryMasterEntity>.Filter.In(r => r.ProjectId, allowedProjectIds));
+
+                var mongoFilter = filters.Count > 0
+                    ? Builders<RepositoryMasterEntity>.Filter.And(filters)
+                    : Builders<RepositoryMasterEntity>.Filter.Empty;
 
                 return await Collection.Find(mongoFilter)
                     .SortBy(r => r.GiteaRepoName)

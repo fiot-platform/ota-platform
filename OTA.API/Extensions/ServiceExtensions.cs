@@ -7,6 +7,7 @@ using OTA.API.Helpers;
 using OTA.API.Models.Settings;
 using OTA.API.Repositories;
 using OTA.API.Repositories.Interfaces;
+using OTA.API.Services;
 using OTA.API.Services.Interfaces;
 
 namespace OTA.API.Extensions
@@ -145,11 +146,8 @@ namespace OTA.API.Extensions
                 options.AddPolicy("PlatformAdmin",     p => p.RequireRole("PlatformAdmin"));
                 options.AddPolicy("ReleaseManager",    p => p.RequireRole("ReleaseManager"));
                 options.AddPolicy("QA",                p => p.RequireRole("QA"));
-                options.AddPolicy("DevOpsEngineer",    p => p.RequireRole("DevOpsEngineer"));
-                options.AddPolicy("SupportEngineer",   p => p.RequireRole("SupportEngineer"));
                 options.AddPolicy("CustomerAdmin",     p => p.RequireRole("CustomerAdmin"));
                 options.AddPolicy("Viewer",            p => p.RequireRole("Viewer"));
-                options.AddPolicy("Auditor",           p => p.RequireRole("Auditor"));
                 options.AddPolicy("Device",            p => p.RequireRole("Device"));
 
                 // ── Composite policies ────────────────────────────────────────
@@ -158,17 +156,21 @@ namespace OTA.API.Extensions
                 options.AddPolicy("CanApproveFirmware", p =>
                     p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager"));
 
-                // Device management: SuperAdmin, PlatformAdmin, DevOpsEngineer, or SupportEngineer
+                // QA session management: QA engineers, Release Manager, plus admins
+                options.AddPolicy("CanRunQASession", p =>
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA"));
+
+                // Device management: SuperAdmin or PlatformAdmin
                 options.AddPolicy("CanManageDevices", p =>
-                    p.RequireRole("SuperAdmin", "PlatformAdmin", "DevOpsEngineer", "SupportEngineer"));
+                    p.RequireRole("SuperAdmin", "PlatformAdmin"));
 
-                // Audit log access: SuperAdmin, PlatformAdmin, ReleaseManager, QA, DevOpsEngineer, Auditor
+                // Audit log access: SuperAdmin, PlatformAdmin, ReleaseManager, QA
                 options.AddPolicy("CanViewAudit", p =>
-                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA", "DevOpsEngineer", "Auditor"));
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA"));
 
-                // Repository sync: SuperAdmin, PlatformAdmin, ReleaseManager, DevOpsEngineer
+                // Repository sync: SuperAdmin, PlatformAdmin, ReleaseManager
                 options.AddPolicy("CanSyncRepository", p =>
-                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "DevOpsEngineer"));
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager"));
 
                 // Rollout management: SuperAdmin, PlatformAdmin, ReleaseManager
                 options.AddPolicy("CanManageRollouts", p =>
@@ -181,7 +183,7 @@ namespace OTA.API.Extensions
                 // Report access (all human roles excluding Device)
                 options.AddPolicy("CanViewReports", p =>
                     p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA",
-                                  "DevOpsEngineer", "SupportEngineer", "CustomerAdmin", "Viewer", "Auditor"));
+                                  "CustomerAdmin", "Viewer"));
 
                 // User management: SuperAdmin, PlatformAdmin
                 options.AddPolicy("CanManageUsers", p =>
@@ -193,12 +195,11 @@ namespace OTA.API.Extensions
 
                 // Firmware sync from Gitea
                 options.AddPolicy("CanSyncFirmware", p =>
-                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "DevOpsEngineer"));
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager"));
 
                 // Device view: all except Device role itself
                 options.AddPolicy("CanViewDevices", p =>
-                    p.RequireRole("SuperAdmin", "PlatformAdmin", "DevOpsEngineer",
-                                  "SupportEngineer", "CustomerAdmin", "ReleaseManager", "QA", "Auditor", "Viewer"));
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "CustomerAdmin", "ReleaseManager", "QA", "Viewer"));
             });
 
             return services;
@@ -253,6 +254,35 @@ namespace OTA.API.Extensions
             // Audit context (scoped per-request)
             services.AddScoped<AuditContext>();
 
+            // Firebase push notifications
+            services.AddScoped<INotificationService, OTA.API.Services.FirebaseNotificationService>();
+
+            // Email notifications
+            services.AddScoped<IEmailService, OTA.API.Services.EmailService>();
+
+            return services;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // MQTT
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Registers the MQTT service as a singleton and binds configuration from the
+        /// MqttSettings section. The <see cref="MqttService"/> instance is shared
+        /// across the application lifetime and used by <see cref="BackgroundJobs.MqttBackgroundService"/>.
+        /// </summary>
+        public static IServiceCollection AddMqtt(
+            this IServiceCollection services,
+            IConfiguration config)
+        {
+            services.Configure<MqttSettings>(config.GetSection(MqttSettings.SectionName));
+
+            // Register as both the concrete type (needed by MqttBackgroundService for
+            // subscription setup) and the interface (used by any service that publishes).
+            services.AddSingleton<MqttService>();
+            services.AddSingleton<IMqttService>(sp => sp.GetRequiredService<MqttService>());
+
             return services;
         }
 
@@ -265,6 +295,7 @@ namespace OTA.API.Extensions
         /// </summary>
         public static IServiceCollection AddApplicationRepositories(this IServiceCollection services)
         {
+            services.AddScoped<IDeviceOtaEventRepository, DeviceOtaEventRepository>();
             services.AddScoped<IQASessionRepository, QASessionRepository>();
             services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<IProjectRepository, ProjectRepository>();
@@ -276,6 +307,8 @@ namespace OTA.API.Extensions
             services.AddScoped<IRepositoryEventRepository, RepositoryEventRepository>();
             services.AddScoped<IAuditLogRepository, AuditLogRepository>();
             services.AddScoped<IRolloutPolicyRepository, RolloutPolicyRepository>();
+            services.AddScoped<IEmailNotificationSettingsRepository, EmailNotificationSettingsRepository>();
+            services.AddScoped<INotificationLogRepository, NotificationLogRepository>();
 
             return services;
         }

@@ -98,7 +98,7 @@ namespace OTA.API.Repositories
         }
 
         /// <inheritdoc/>
-        public async Task<List<RolloutEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default)
+        public async Task<List<RolloutEntity>> SearchAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
@@ -109,9 +109,7 @@ namespace OTA.API.Repositories
                 FilterDefinition<RolloutEntity> mongoFilter;
 
                 if (string.IsNullOrWhiteSpace(filter))
-                {
                     mongoFilter = Builders<RolloutEntity>.Filter.Empty;
-                }
                 else
                 {
                     var regex = new MongoDB.Bson.BsonRegularExpression(filter, "i");
@@ -120,6 +118,9 @@ namespace OTA.API.Repositories
                         Builders<RolloutEntity>.Filter.Regex(r => r.Description, regex)
                     );
                 }
+
+                if (!string.IsNullOrWhiteSpace(projectId))
+                    mongoFilter &= Builders<RolloutEntity>.Filter.Eq(r => r.ProjectId, projectId);
 
                 return await Collection.Find(mongoFilter)
                     .SortByDescending(r => r.CreatedAt)

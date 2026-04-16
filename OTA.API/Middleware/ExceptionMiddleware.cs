@@ -85,7 +85,9 @@ namespace OTA.API.Middleware
 
                 case InvalidOperationException invalidOpEx when
                     invalidOpEx.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) ||
-                    invalidOpEx.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase):
+                    invalidOpEx.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+                    invalidOpEx.Message.Contains("already registered", StringComparison.OrdinalIgnoreCase) ||
+                    invalidOpEx.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase):
                     statusCode = (int)HttpStatusCode.Conflict;
                     message = invalidOpEx.Message;
                     _logger.LogWarning(invalidOpEx,

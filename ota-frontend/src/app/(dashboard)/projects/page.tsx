@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, RefreshCw, Pencil, Power, PowerOff, Eye } from 'lucide-react'
+import { Plus, Search, RefreshCw, Pencil, Power, PowerOff, Eye, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { projectService } from '@/services/project.service'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -26,6 +26,7 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = React.useState<Project | undefined>()
   const [confirmDeactivate, setConfirmDeactivate] = React.useState<Project | null>(null)
   const [confirmActivate, setConfirmActivate] = React.useState<Project | null>(null)
+  const [confirmDelete, setConfirmDelete] = React.useState<Project | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['projects', { search, page, pageSize }],
@@ -72,6 +73,16 @@ export default function ProjectsPage() {
       setConfirmActivate(null)
     },
     onError: () => toast({ title: 'Failed to activate project', variant: 'error' }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => projectService.deleteProject(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      toast({ title: 'Project deleted', variant: 'success' })
+      setConfirmDelete(null)
+    },
+    onError: () => toast({ title: 'Failed to delete project', variant: 'error' }),
   })
 
   const columns: Column<Project>[] = [
@@ -173,6 +184,15 @@ export default function ProjectsPage() {
               </button>
             )}
           </RoleGuard>
+          <RoleGuard module="Projects" action="delete">
+            <button
+              onClick={() => setConfirmDelete(row)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </RoleGuard>
         </div>
       ),
     },
@@ -227,7 +247,7 @@ export default function ProjectsPage() {
         onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
         isLoading={isLoading}
         keyExtractor={(row) => row.id}
-        emptyMessage="No projects found. Create your first project to get started."
+        emptyMessage="No projects found."
       />
 
       {/* Create / Edit Form */}
@@ -267,6 +287,18 @@ export default function ProjectsPage() {
         variant="default"
         onConfirm={() => confirmActivate && activateMutation.mutate(confirmActivate.id)}
         isLoading={activateMutation.isPending}
+      />
+
+      {/* Delete Confirm */}
+      <ConfirmDialog
+        open={Boolean(confirmDelete)}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+        title="Delete Project"
+        message={`Permanently delete "${confirmDelete?.name}"? This cannot be undone and will remove all associated data.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => confirmDelete && deleteMutation.mutate(confirmDelete.id)}
+        isLoading={deleteMutation.isPending}
       />
     </div>
   )

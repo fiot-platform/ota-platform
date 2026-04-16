@@ -1,9 +1,12 @@
+using System.Net.Http.Headers;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using OTA.API.Helpers;
 using OTA.API.Models.DTOs;
 using OTA.API.Models.Enums;
+using OTA.API.Models.Settings;
 using OTA.API.Services.Interfaces;
 
 namespace OTA.API.Controllers
@@ -20,11 +23,19 @@ namespace OTA.API.Controllers
     public class FirmwareController : ControllerBase
     {
         private readonly IFirmwareService _firmwareService;
+        private readonly IUserService _userService;
+        private readonly GiteaSettings _giteaSettings;
         private readonly ILogger<FirmwareController> _logger;
 
-        public FirmwareController(IFirmwareService firmwareService, ILogger<FirmwareController> logger)
+        public FirmwareController(
+            IFirmwareService firmwareService,
+            IUserService userService,
+            IOptions<GiteaSettings> giteaSettings,
+            ILogger<FirmwareController> logger)
         {
             _firmwareService = firmwareService ?? throw new ArgumentNullException(nameof(firmwareService));
+            _userService     = userService ?? throw new ArgumentNullException(nameof(userService));
+            _giteaSettings   = giteaSettings?.Value ?? throw new ArgumentNullException(nameof(giteaSettings));
             _logger          = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -34,8 +45,25 @@ namespace OTA.API.Controllers
         private string CurrentEmail =>
             User.FindFirstValue(ClaimTypes.Email) ?? User.FindFirstValue("email") ?? string.Empty;
 
+        private string CurrentName =>
+            User.FindFirstValue("fullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
+
         private string ClientIp =>
             HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+
+        private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
+        {
+            // SuperAdmin and PlatformAdmin see everything — no filtering.
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+            if (role is "SuperAdmin" or "PlatformAdmin") return null;
+
+            // Fetch live project scope from the database so changes take effect without re-login.
+            var userId = CurrentUserId;
+            if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
+
+            var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            return user?.ProjectScope ?? new List<string>();
+        }
 
         /// <summary>Returns a paginated list of firmware records. All authenticated roles.</summary>
         [HttpGet]
@@ -53,7 +81,15 @@ namespace OTA.API.Controllers
         {
             // Accept either 'search' or legacy 'filter' param
             var searchTerm = search ?? filter ?? string.Empty;
-            var result = await _firmwareService.GetFirmwareListAsync(searchTerm, status, channel, projectId, repositoryId, page, pageSize, cancellationToken);
+            var allowedProjectIds = await GetProjectScopeAsync(cancellationToken);
+
+            // Roles that are not part of the approval workflow only see Approved firmware.
+            // SuperAdmin, PlatformAdmin, ReleaseManager, and QA can see all statuses.
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+            if (role is not ("SuperAdmin" or "PlatformAdmin" or "ReleaseManager" or "QA"))
+                status = FirmwareStatus.Approved.ToString();
+
+            var result = await _firmwareService.GetFirmwareListAsync(searchTerm, status, channel, projectId, repositoryId, page, pageSize, allowedProjectIds, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
             return Ok(ApiResponse<List<FirmwareDto>>.Ok(result.Items, "Firmware list retrieved successfully.", pagination));
         }
@@ -67,6 +103,75 @@ namespace OTA.API.Controllers
             var firmware = await _firmwareService.GetFirmwareByIdAsync(id, cancellationToken);
             if (firmware == null)
                 return NotFound(ApiResponse<FirmwareDto>.Fail($"Firmware '{id}' was not found."));
+
+            // Prefer the denormalised name stored on creation; fall back to a live user lookup for
+            // older records that were created before this field was introduced.
+            if (string.IsNullOrWhiteSpace(firmware.CreatedByName) && !string.IsNullOrWhiteSpace(firmware.CreatedByUserId))
+            {
+                try
+                {
+                    var creator = await _userService.GetUserByIdAsync(firmware.CreatedByUserId, cancellationToken);
+                    if (creator != null)
+                        firmware.CreatedByName = !string.IsNullOrWhiteSpace(creator.Name)
+                            ? creator.Name
+                            : creator.Email;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not enrich firmware creator name for userId={UserId}", firmware.CreatedByUserId);
+                }
+            }
+
+            // Enrich QA verifier name.
+            if (!string.IsNullOrWhiteSpace(firmware.QaVerifiedByUserId))
+            {
+                try
+                {
+                    var qaUser = await _userService.GetUserByIdAsync(firmware.QaVerifiedByUserId, cancellationToken);
+                    if (qaUser != null)
+                        firmware.QaVerifiedByName = !string.IsNullOrWhiteSpace(qaUser.Name)
+                            ? qaUser.Name
+                            : qaUser.Email;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not enrich QA verifier name for userId={UserId}", firmware.QaVerifiedByUserId);
+                }
+            }
+
+            // Enrich approver name.
+            if (!string.IsNullOrWhiteSpace(firmware.ApprovedByUserId))
+            {
+                try
+                {
+                    var approver = await _userService.GetUserByIdAsync(firmware.ApprovedByUserId, cancellationToken);
+                    if (approver != null)
+                        firmware.ApprovedByName = !string.IsNullOrWhiteSpace(approver.Name)
+                            ? approver.Name
+                            : approver.Email;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not enrich approver name for userId={UserId}", firmware.ApprovedByUserId);
+                }
+            }
+
+            // Enrich rejector name.
+            if (!string.IsNullOrWhiteSpace(firmware.RejectedByUserId))
+            {
+                try
+                {
+                    var rejector = await _userService.GetUserByIdAsync(firmware.RejectedByUserId, cancellationToken);
+                    if (rejector != null)
+                        firmware.RejectedByName = !string.IsNullOrWhiteSpace(rejector.Name)
+                            ? rejector.Name
+                            : rejector.Email;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not enrich rejector name for userId={UserId}", firmware.RejectedByUserId);
+                }
+            }
 
             return Ok(ApiResponse<FirmwareDto>.Ok(firmware));
         }
@@ -86,7 +191,7 @@ namespace OTA.API.Controllers
                 return BadRequest(ApiResponse<FirmwareDto>.Fail("Validation failed.", errors));
             }
 
-            var created = await _firmwareService.CreateFirmwareAsync(request, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            var created = await _firmwareService.CreateFirmwareAsync(request, CurrentUserId, CurrentName, CurrentEmail, ClientIp, cancellationToken);
             return CreatedAtAction(nameof(GetFirmwareById), new { id = created.FirmwareId },
                 ApiResponse<FirmwareDto>.Ok(created, "Firmware created successfully."));
         }
@@ -112,9 +217,46 @@ namespace OTA.API.Controllers
             return Ok(ApiResponse<FirmwareDto>.Ok(updated, "Firmware updated successfully."));
         }
 
-        /// <summary>Submits QA verification for a firmware record. QA team only.</summary>
+        /// <summary>
+        /// Proxies the firmware binary download — streams the file from Gitea to the authenticated
+        /// caller so the real Gitea URL is never exposed to the client.
+        /// </summary>
+        [HttpGet("{id}/download")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DownloadFirmware(string id, CancellationToken cancellationToken = default)
+        {
+            var firmware = await _firmwareService.GetFirmwareByIdAsync(id, cancellationToken);
+            if (firmware == null)
+                return NotFound(ApiResponse<object>.Fail("Firmware not found."));
+
+            if (string.IsNullOrWhiteSpace(firmware.DownloadUrl))
+                return NotFound(ApiResponse<object>.Fail("No download URL is available for this firmware."));
+
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", _giteaSettings.AdminToken);
+
+            var response = await httpClient.GetAsync(firmware.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Gitea returned {Code} when downloading firmware '{Id}' from '{Url}'.",
+                    (int)response.StatusCode, id, firmware.DownloadUrl);
+                return NotFound(ApiResponse<object>.Fail($"File could not be retrieved from storage (HTTP {(int)response.StatusCode})."));
+            }
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            var fileName = !string.IsNullOrWhiteSpace(firmware.FileName) ? firmware.FileName : $"firmware-{firmware.Version}.bin";
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+
+            Response.Headers["Content-Disposition"] = $"attachment; filename=\"{fileName}\"";
+            return File(stream, contentType, fileName);
+        }
+
+        /// <summary>Submits QA verification for a firmware record. QA team and Release Manager.</summary>
         [HttpPost("{id}/qa-verify")]
-        [Authorize(Policy = "CanApproveFirmware")]
+        [Authorize(Policy = "CanRunQASession")]
         [ProducesResponseType(typeof(ApiResponse<FirmwareDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
@@ -194,6 +336,18 @@ namespace OTA.API.Controllers
 
             var result = await _firmwareService.AssignChannelAsync(id, request.Channel, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse<FirmwareDto>.Ok(result, "Channel assigned successfully."));
+        }
+
+        /// <summary>Permanently deletes a firmware record. SuperAdmin only. Approved firmware cannot be deleted.</summary>
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "SuperAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> DeleteFirmware(string id, CancellationToken cancellationToken = default)
+        {
+            await _firmwareService.DeleteFirmwareAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse.OkNoData("Firmware deleted successfully."));
         }
 
         /// <summary>Deprecates an approved firmware. SuperAdmin and PlatformAdmin only.</summary>

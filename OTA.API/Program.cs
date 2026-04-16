@@ -1,3 +1,5 @@
+using FirebaseAdmin;
+using Google.Apis.Auth.OAuth2;
 using OTA.API.BackgroundJobs;
 using OTA.API.Extensions;
 using OTA.API.Middleware;
@@ -34,6 +36,38 @@ try
         builder.Configuration.GetSection(GiteaSettings.SectionName));
     builder.Services.Configure<CorsSettings>(
         builder.Configuration.GetSection(CorsSettings.SectionName));
+    builder.Services.Configure<OTA.API.Models.Settings.MqttSettings>(
+        builder.Configuration.GetSection(OTA.API.Models.Settings.MqttSettings.SectionName));
+    builder.Services.Configure<FirebaseSettings>(
+        builder.Configuration.GetSection(FirebaseSettings.SectionName));
+
+    // ── Firebase initialisation ───────────────────────────────────────────────
+    var firebaseSettings = builder.Configuration
+        .GetSection(FirebaseSettings.SectionName)
+        .Get<FirebaseSettings>();
+
+    if (firebaseSettings?.Enabled == true && !string.IsNullOrWhiteSpace(firebaseSettings.ServiceAccountKeyPath))
+    {
+        try
+        {
+            if (FirebaseApp.DefaultInstance == null)
+            {
+                FirebaseApp.Create(new AppOptions
+                {
+                    Credential = GoogleCredential.FromFile(firebaseSettings.ServiceAccountKeyPath)
+                });
+                Log.Information("Firebase initialised from {Path}.", firebaseSettings.ServiceAccountKeyPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Firebase initialisation failed — push notifications will be disabled.");
+        }
+    }
+    else
+    {
+        Log.Information("Firebase notifications are disabled (FirebaseSettings.Enabled=false or no key file).");
+    }
 
     // ── Infrastructure ────────────────────────────────────────────────────────
     builder.Services.AddMongoDb(builder.Configuration);
@@ -44,6 +78,8 @@ try
     // ── Repository & service layers ───────────────────────────────────────────
     builder.Services.AddApplicationRepositories();
     builder.Services.AddApplicationServices();
+    builder.Services.Configure<OTA.API.Models.Settings.EmailSettings>(
+        builder.Configuration.GetSection(OTA.API.Models.Settings.EmailSettings.SectionName));
 
     // ── HTTP client for Gitea API ─────────────────────────────────────────────
     builder.Services.AddHttpClient<OTA.API.Services.Interfaces.IGiteaApiService,
@@ -59,8 +95,12 @@ try
         client.Timeout = TimeSpan.FromSeconds(30);
     });
 
+    // ── MQTT ──────────────────────────────────────────────────────────────────
+    builder.Services.AddMqtt(builder.Configuration);
+
     // ── Background services ───────────────────────────────────────────────────
     builder.Services.AddHostedService<WebhookRetryJob>();
+    builder.Services.AddHostedService<OTA.API.BackgroundJobs.MqttBackgroundService>();
 
     // ── MVC ───────────────────────────────────────────────────────────────────
     builder.Services.AddControllers()
@@ -92,25 +132,30 @@ try
     // ── Seed default SuperAdmin if database is empty ──────────────────────────
     using (var scope = app.Services.CreateScope())
     {
-        await OTA.API.Helpers.DataSeeder.SeedAsync(
-            scope.ServiceProvider,
-            app.Services.GetRequiredService<ILogger<Program>>());
+        var seederLogger = app.Services.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            await OTA.API.Helpers.DataSeeder.SeedAsync(scope.ServiceProvider, seederLogger);
+        }
+        catch (Exception ex)
+        {
+            seederLogger.LogWarning(ex,
+                "DataSeeder: Could not reach MongoDB — skipping seed. " +
+                "The API will still start; ensure the database is reachable.");
+        }
     }
 
     // ── Global exception handler (must be first in pipeline) ─────────────────
     app.UseMiddleware<ExceptionMiddleware>();
 
-    // ── Swagger UI (development + staging) ───────────────────────────────────
-    if (!app.Environment.IsProduction())
+    // ── Swagger UI (always enabled) ──────────────────────────────────────────
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        app.UseSwagger();
-        app.UseSwaggerUI(c =>
-        {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "OTA Platform API v1");
-            c.RoutePrefix = "swagger";
-            c.DisplayRequestDuration();
-        });
-    }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "OTA Platform API v1");
+        c.RoutePrefix = "swagger";
+        c.DisplayRequestDuration();
+    });
 
     // ── Serilog request logging ───────────────────────────────────────────────
     app.UseSerilogRequestLogging(options =>

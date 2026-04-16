@@ -54,6 +54,11 @@ namespace OTA.API.Services.Interfaces
         Task DeactivateProjectAsync(string projectId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Permanently deletes a project. SuperAdmin only.
+        /// </summary>
+        Task DeleteProjectAsync(string projectId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Retrieves a project by its identifier.
         /// </summary>
         /// <param name="projectId">The project identifier.</param>
@@ -69,7 +74,7 @@ namespace OTA.API.Services.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged result containing project DTOs and total count.</returns>
-        Task<PagedResult<ProjectDto>> GetProjectsAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<PagedResult<ProjectDto>> GetProjectsAsync(string filter, int page, int pageSize, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Retrieves all projects belonging to the specified customer.

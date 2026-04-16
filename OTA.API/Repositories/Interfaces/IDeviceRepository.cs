@@ -52,15 +52,17 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="pageSize">Number of results per page.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paged list of matching device entities.</returns>
-        Task<List<DeviceEntity>> SearchAsync(string filter, int page, int pageSize, CancellationToken cancellationToken = default);
+        Task<List<DeviceEntity>> SearchAsync(string filter, int page, int pageSize, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Counts devices matching the given filter text.
         /// </summary>
         /// <param name="filter">Search text to match against device fields.</param>
+        /// <param name="projectId">Optional explicit project identifier to scope results.</param>
+        /// <param name="allowedProjectIds">When non-null, restricts results to the given project IDs (role scope).</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Total number of matching devices.</returns>
-        Task<long> CountAsync(string filter, CancellationToken cancellationToken = default);
+        Task<long> CountAsync(string filter, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Updates the last-seen heartbeat timestamp for the specified device.
@@ -77,5 +79,16 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="firmwareVersion">The new firmware version string reported by the device.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         Task UpdateFirmwareVersionAsync(string deviceId, string firmwareVersion, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Updates the live OTA progress fields on a device.
+        /// Called on every MQTT OTA status packet from the device.
+        /// </summary>
+        /// <param name="deviceId">The MongoDB ObjectId of the device.</param>
+        /// <param name="otaStatus">Status string (start | inprogress | success | failed | rollback).</param>
+        /// <param name="otaProgress">Progress percentage 0–100.</param>
+        /// <param name="otaTargetVersion">Firmware version being installed.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task UpdateOtaProgressAsync(string deviceId, string otaStatus, int otaProgress, string? otaTargetVersion, CancellationToken cancellationToken = default);
     }
 }

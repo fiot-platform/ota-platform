@@ -19,8 +19,10 @@ namespace OTA.API.Services
     public class RepositoryService : IRepositoryService
     {
         private readonly IRepositoryMasterRepository _repoRepository;
+        private readonly IProjectRepository _projectRepository;
         private readonly IGiteaApiService _giteaApiService;
         private readonly IAuditService _auditService;
+        private readonly INotificationService _notificationService;
         private readonly ILogger<RepositoryService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -33,14 +35,18 @@ namespace OTA.API.Services
         /// </summary>
         public RepositoryService(
             IRepositoryMasterRepository repoRepository,
+            IProjectRepository projectRepository,
             IGiteaApiService giteaApiService,
             IAuditService auditService,
+            INotificationService notificationService,
             ILogger<RepositoryService> logger)
         {
-            _repoRepository = repoRepository ?? throw new ArgumentNullException(nameof(repoRepository));
-            _giteaApiService = giteaApiService ?? throw new ArgumentNullException(nameof(giteaApiService));
-            _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _repoRepository      = repoRepository      ?? throw new ArgumentNullException(nameof(repoRepository));
+            _projectRepository   = projectRepository   ?? throw new ArgumentNullException(nameof(projectRepository));
+            _giteaApiService     = giteaApiService     ?? throw new ArgumentNullException(nameof(giteaApiService));
+            _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc/>
@@ -135,6 +141,12 @@ namespace OTA.API.Services
                 ipAddress,
                 cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "Repository Registered",
+                $"Repository '{entity.GiteaOwner}/{entity.GiteaRepoName}' was registered.",
+                new Dictionary<string, string> { ["type"] = "repository_registered", ["repositoryId"] = entity.Id, ["name"] = entity.GiteaRepoName },
+                cancellationToken: CancellationToken.None);
+
             return MapToDto(entity);
         }
 
@@ -175,6 +187,12 @@ namespace OTA.API.Services
                 ipAddress,
                 cancellationToken: cancellationToken);
 
+            _ = _notificationService.NotifyAsync(
+                "Repository Updated",
+                $"Repository '{entity.GiteaRepoName}' was updated.",
+                new Dictionary<string, string> { ["type"] = "repository_updated", ["repositoryId"] = repositoryId, ["name"] = entity.GiteaRepoName },
+                cancellationToken: CancellationToken.None);
+
             return MapToDto(entity);
         }
 
@@ -205,19 +223,35 @@ namespace OTA.API.Services
         }
 
         /// <inheritdoc/>
-        public async Task<List<RepositoryDto>> GetRepositoriesAsync(string filter, int page, int pageSize, string? projectId = null, CancellationToken cancellationToken = default)
+        public async Task<List<RepositoryDto>> GetRepositoriesAsync(string filter, int page, int pageSize, string? projectId = null, List<string>? allowedProjectIds = null, CancellationToken cancellationToken = default)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
 
+            // Always go through SearchAsync so allowedProjectIds scope is consistently applied.
+            // When a specific projectId is requested, treat it as an additional filter.
+            var effectiveAllowedIds = allowedProjectIds;
             if (!string.IsNullOrWhiteSpace(projectId))
             {
-                var projectItems = await _repoRepository.GetByProjectIdAsync(projectId, cancellationToken);
-                return projectItems.Select(MapToDto).ToList();
+                // Intersect: if scope is null (admin), only the requested project; otherwise the intersection.
+                effectiveAllowedIds = allowedProjectIds == null
+                    ? new List<string> { projectId }
+                    : allowedProjectIds.Contains(projectId) ? new List<string> { projectId } : new List<string>();
             }
 
-            var items = await _repoRepository.SearchAsync(filter, page, pageSize, cancellationToken);
-            return items.Select(MapToDto).ToList();
+            var items = await _repoRepository.SearchAsync(filter, page, pageSize, effectiveAllowedIds, cancellationToken);
+
+            // Batch-load project names to avoid N+1 queries
+            var projectIds = items.Select(r => r.ProjectId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+            var projectNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pid in projectIds)
+            {
+                if (!MongoDB.Bson.ObjectId.TryParse(pid, out _)) continue;
+                var project = await _projectRepository.GetByIdAsync(pid, cancellationToken);
+                if (project != null) projectNames[pid] = project.Name;
+            }
+
+            return items.Select(r => MapToDto(r, projectNames.GetValueOrDefault(r.ProjectId ?? string.Empty))).ToList();
         }
 
         /// <inheritdoc/>
@@ -226,7 +260,40 @@ namespace OTA.API.Services
             if (string.IsNullOrWhiteSpace(projectId)) throw new ArgumentException("ProjectId is required.", nameof(projectId));
 
             var items = await _repoRepository.GetByProjectIdAsync(projectId, cancellationToken);
-            return items.Select(MapToDto).ToList();
+            return items.Select(r => MapToDto(r)).ToList();
+        }
+
+        /// <inheritdoc/>
+        public async Task DeleteRepositoryAsync(
+            string repositoryId,
+            string callerUserId,
+            string callerEmail,
+            string ipAddress,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(repositoryId)) throw new ArgumentException("RepositoryId is required.", nameof(repositoryId));
+
+            var entity = await _repoRepository.GetByIdAsync(repositoryId, cancellationToken)
+                ?? throw new KeyNotFoundException($"Repository '{repositoryId}' not found.");
+
+            await _repoRepository.DeleteAsync(repositoryId, cancellationToken);
+
+            _logger.LogInformation("Repository '{RepositoryId}' permanently deleted by '{Email}'.", repositoryId, callerEmail);
+
+            await _auditService.LogActionAsync(
+                AuditAction.RepositoryDeleted,
+                callerUserId, callerEmail, UserRole.SuperAdmin,
+                "Repository", repositoryId,
+                JsonSerializer.Serialize(new { entity.GiteaOwner, entity.GiteaRepoName, entity.ProjectId }, _jsonOptions),
+                null,
+                ipAddress,
+                cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Repository Deleted",
+                $"Repository '{entity.GiteaOwner}/{entity.GiteaRepoName}' was permanently deleted.",
+                new Dictionary<string, string> { ["type"] = "repository_deleted", ["repositoryId"] = repositoryId, ["name"] = entity.GiteaRepoName },
+                cancellationToken: CancellationToken.None);
         }
 
         /// <inheritdoc/>
@@ -258,11 +325,17 @@ namespace OTA.API.Services
                 JsonSerializer.Serialize(new { IsActive = false }, _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
+
+            _ = _notificationService.NotifyAsync(
+                "Repository Deactivated",
+                $"Repository '{entity.GiteaOwner}/{entity.GiteaRepoName}' was deactivated.",
+                new Dictionary<string, string> { ["type"] = "repository_deactivated", ["repositoryId"] = repositoryId, ["name"] = entity.GiteaRepoName },
+                cancellationToken: CancellationToken.None);
         }
 
         // ── Private mapper ──────────────────────────────────────────────────────────
 
-        private static RepositoryDto MapToDto(RepositoryMasterEntity e) => new RepositoryDto
+        private static RepositoryDto MapToDto(RepositoryMasterEntity e, string? projectName = null) => new RepositoryDto
         {
             Id = e.Id,
             RepositoryId = e.Id,
@@ -274,6 +347,7 @@ namespace OTA.API.Services
             GiteaRepoId = long.TryParse(e.GiteaRepoId, out var giteaId) ? giteaId : 0,
             GiteaUrl = e.GiteaUrl,
             ProjectId = e.ProjectId,
+            ProjectName = projectName,
             DefaultBranch = e.DefaultBranch,
             IsActive = e.IsActive,
             WebhookConfigured = e.WebhookConfigured,

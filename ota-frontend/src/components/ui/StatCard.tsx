@@ -11,14 +11,14 @@ interface StatCardProps {
     label?: string
     direction: 'up' | 'down' | 'neutral'
   }
-  accent?: 'blue' | 'green' | 'amber' | 'red' | 'purple' | 'navy'
+  accent?: 'primary' | 'green' | 'amber' | 'red' | 'purple' | 'navy'
   isLoading?: boolean
   onClick?: () => void
   className?: string
 }
 
 const accentStyles: Record<string, { bg: string; icon: string; value: string }> = {
-  blue: {
+  primary: {
     bg: 'bg-accent-50 ring-accent-200',
     icon: 'text-accent-600',
     value: 'text-accent-700',
@@ -55,7 +55,7 @@ export function StatCard({
   value,
   icon,
   trend,
-  accent = 'blue',
+  accent = 'primary',
   isLoading = false,
   onClick,
   className,

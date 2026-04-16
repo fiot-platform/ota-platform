@@ -5,11 +5,8 @@ export enum UserRole {
   PlatformAdmin = 'PlatformAdmin',
   ReleaseManager = 'ReleaseManager',
   QA = 'QA',
-  DevOpsEngineer = 'DevOpsEngineer',
-  SupportEngineer = 'SupportEngineer',
   CustomerAdmin = 'CustomerAdmin',
   Viewer = 'Viewer',
-  Auditor = 'Auditor',
   Device = 'Device',
 }
 
@@ -135,6 +132,7 @@ export interface JwtPayload {
 
 export interface User {
   id: string
+  userId?: string
   name: string
   email: string
   role: UserRole
@@ -267,18 +265,23 @@ export interface FirmwareVersion {
   minRequiredVersion?: string
   maxAllowedVersion?: string
   approvedBy?: string
+  approvedByName?: string
   approvedAt?: string
   approvalNotes?: string
   rejectedBy?: string
+  rejectedByName?: string
   rejectedAt?: string
   rejectionReason?: string
   qaVerifiedBy?: string
+  qaVerifiedByName?: string
   qaVerifiedAt?: string
   qaRemarks?: string
   isQaVerified: boolean
+  qaSessionStatus?: string
   createdAt: string
   updatedAt: string
   createdByUserId?: string
+  createdByName?: string
 }
 
 export interface CreateFirmwareRequest {
@@ -288,6 +291,7 @@ export interface CreateFirmwareRequest {
   channel: FirmwareChannel
   releaseNotes?: string
   fileName?: string
+  storedFileName?: string
   fileSha256?: string
   fileSizeBytes?: number
   downloadUrl?: string
@@ -327,31 +331,47 @@ export interface AssignChannelRequest {
 
 export interface Device {
   id: string
-  serialNumber: string
+  deviceId?: string
+  serialNumber?: string
+  macImeiIp?: string
+  macAddress?: string
+  ipAddress?: string
+  projectName?: string
   model: string
   hardwareRevision?: string
-  firmwareVersionId?: string
-  currentFirmwareVersion?: string
   customerId: string
   customerName?: string
   siteId?: string
   siteName?: string
+  currentFirmwareVersion?: string
+  previousFirmwareVersion?: string
   status: DeviceStatus
   lastHeartbeatAt?: string
   registeredAt: string
   updatedAt: string
-  ipAddress?: string
-  macAddress?: string
+  tags?: string[]
   metadata?: Record<string, string>
+  publishTopic?: string
+  // Live OTA progress (from MQTT status packets)
+  otaStatus?: string
+  otaProgress?: number
+  otaTargetVersion?: string
+  otaUpdatedAt?: string
 }
 
 export interface RegisterDeviceRequest {
-  serialNumber: string
+  projectName: string
+  customerCode: string
+  macImeiIp: string
   model: string
+  serialNumber?: string
   hardwareRevision?: string
-  customerId: string
+  customerId?: string
+  customerName?: string
   siteId?: string
-  metadata?: Record<string, string>
+  siteName?: string
+  currentFirmwareVersion?: string
+  publishTopic?: string
 }
 
 export interface CheckUpdateRequest {
@@ -368,9 +388,8 @@ export interface CheckUpdateResponse {
 
 export interface UpdateDeviceRequest {
   model?: string
-  hardwareRevision?: string
-  siteId?: string
-  metadata?: Record<string, string>
+  currentFirmwareVersion?: string
+  publishTopic?: string
 }
 
 // ─── OTA Rollout ──────────────────────────────────────────────────────────────
@@ -530,15 +549,31 @@ export interface WebhookEvent {
 // ─── Reports / Dashboard ──────────────────────────────────────────────────────
 
 export interface DashboardSummary {
+  // Platform-wide counts
   totalProjects: number
   totalRepositories: number
-  totalFirmwareVersions: number
+  totalDevices: number
   activeDevices: number
+  suspendedDevices: number
+  offlineDevices: number
+  devicesUpdating: number
+
+  // Firmware counts
+  totalFirmware: number
+  totalFirmwareVersions: number   // alias for totalFirmware
+  approvedFirmware: number
+  pendingApprovalFirmware: number
+  pendingApprovals: number        // alias for pendingApprovalFirmware
+  pendingQAFirmware: number
+
+  // Rollouts
   activeRollouts: number
-  pendingApprovals: number
-  recentAuditEvents: AuditLog[]
-  deviceStatusBreakdown: { status: DeviceStatus; count: number }[]
-  rolloutStatusBreakdown: { status: RolloutStatus; count: number }[]
+  completedRollouts: number
+
+  // Users (SuperAdmin only)
+  totalUsers: number
+
+  generatedAt: string
 }
 
 export interface FirmwareApprovalTrend {
@@ -566,6 +601,110 @@ export interface DeviceUpdateStatus {
   failed: number
   offline: number
   total: number
+}
+
+export interface UserReport {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+  isActive: boolean
+  lastLoginAt?: string
+  createdAt: string
+  customerId?: string
+  customerName?: string
+}
+
+export interface ProjectReport {
+  id: string
+  name: string
+  customerId: string
+  customerName: string
+  repositoryCount: number
+  firmwareCount: number
+  activeRollouts: number
+  isActive: boolean
+  createdAt: string
+}
+
+export interface RepositoryReport {
+  id: string
+  name: string
+  projectId: string
+  projectName: string
+  giteaUrl?: string
+  isActive: boolean
+  lastSyncedAt?: string
+  firmwareCount: number
+  webhookConfigured: boolean
+  createdAt: string
+}
+
+export interface FirmwareVersionReport {
+  id: string
+  version: string
+  projectId: string
+  projectName: string
+  repositoryId: string
+  repositoryName: string
+  channel: FirmwareChannel
+  status: FirmwareStatus
+  fileSizeBytes?: number
+  createdAt: string
+  approvedAt?: string
+  approvedByName?: string
+}
+
+export interface DeviceReport {
+  id: string
+  serialNumber: string
+  name?: string
+  projectId: string
+  projectName: string
+  currentFirmwareVersion?: string
+  status: DeviceStatus
+  lastHeartbeatAt?: string
+  createdAt: string
+}
+
+export interface ProjectRepoFirmwareRow {
+  projectId: string
+  projectName: string
+  customerName: string
+  repositoryId: string
+  repositoryName: string
+  firmwareVersion: string
+  channel: FirmwareChannel
+  firmwareStatus: FirmwareStatus
+  firmwareCreatedAt: string
+}
+
+export interface DeviceOtaHistoryRow {
+  deviceId: string
+  deviceSerial: string
+  deviceName?: string
+  projectName: string
+  firmwareVersion: string
+  rolloutId: string
+  jobStatus: OtaJobStatus
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface DailyOtaProgress {
+  date: string
+  succeeded: number
+  failed: number
+  inProgress: number
+  queued: number
+  cancelled: number
+  total: number
+}
+
+export interface FirmwareStageReport {
+  stage: string
+  count: number
+  percentage: number
 }
 
 // ─── Pagination / API Response ────────────────────────────────────────────────
@@ -604,12 +743,26 @@ export interface UserFilters {
   pageSize?: number
 }
 
+export interface BulkRegisterError {
+  row: number
+  identifier: string
+  error: string
+}
+
+export interface BulkRegisterResult {
+  total: number
+  succeeded: number
+  failed: number
+  errors: BulkRegisterError[]
+}
+
 export interface DeviceFilters {
   customerId?: string
   siteId?: string
   status?: DeviceStatus
   model?: string
   search?: string
+  projectId?: string
   page?: number
   pageSize?: number
 }
@@ -698,6 +851,7 @@ export interface QASession {
   eventLog: QAEventLogItem[]
   startedAt?: string
   startedByUserId?: string
+  startedByName?: string
   completedAt?: string
   remarks?: string
   createdAt: string

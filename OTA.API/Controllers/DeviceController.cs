@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,11 +19,13 @@ namespace OTA.API.Controllers
     public class DeviceController : ControllerBase
     {
         private readonly IDeviceService _deviceService;
+        private readonly IUserService _userService;
         private readonly ILogger<DeviceController> _logger;
 
-        public DeviceController(IDeviceService deviceService, ILogger<DeviceController> logger)
+        public DeviceController(IDeviceService deviceService, IUserService userService, ILogger<DeviceController> logger)
         {
             _deviceService = deviceService ?? throw new ArgumentNullException(nameof(deviceService));
+            _userService   = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger        = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -35,19 +38,46 @@ namespace OTA.API.Controllers
         private string ClientIp =>
             HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
 
+        /// <summary>
+        /// Public endpoint — no token required.
+        /// Returns all Active (OTA-ready) devices with their current firmware version and publish topic.
+        /// </summary>
+        [HttpGet("ota-ready")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(ApiResponse<List<OtaReadyDeviceDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetOtaReadyDevices(CancellationToken cancellationToken = default)
+        {
+            var devices = await _deviceService.GetOtaReadyDevicesAsync(cancellationToken);
+            return Ok(ApiResponse<List<OtaReadyDeviceDto>>.Ok(devices, $"{devices.Count} OTA-ready device(s) found."));
+        }
+
         /// <summary>Returns a paginated list of devices. Requires CanViewDevices.</summary>
         [HttpGet]
         [Authorize(Policy = "CanViewDevices")]
         [ProducesResponseType(typeof(ApiResponse<List<DeviceDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetDevices(
-            [FromQuery] string? filter = null,
+            [FromQuery] string? search = null,
+            [FromQuery] string? projectId = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 25,
             CancellationToken cancellationToken = default)
         {
-            var result = await _deviceService.GetDevicesAsync(filter ?? string.Empty, page, pageSize, cancellationToken);
+            var allowedProjectIds = await GetProjectScopeAsync(cancellationToken);
+            var result = await _deviceService.GetDevicesAsync(search ?? string.Empty, page, pageSize, projectId, allowedProjectIds, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
             return Ok(ApiResponse<List<DeviceDto>>.Ok(result.Items, "Devices retrieved successfully.", pagination));
+        }
+
+        private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
+        {
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+            if (role is "SuperAdmin" or "PlatformAdmin") return null;
+
+            var userId = CurrentUserId;
+            if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
+
+            var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            return user?.ProjectScope ?? new List<string>();
         }
 
         /// <summary>Returns a single device by its identifier. Requires CanViewDevices.</summary>
@@ -80,7 +110,7 @@ namespace OTA.API.Controllers
             }
 
             var created = await _deviceService.RegisterDeviceAsync(request, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
-            return CreatedAtAction(nameof(GetDeviceById), new { id = created.DeviceId },
+            return CreatedAtAction(nameof(GetDeviceById), new { id = created.Id },
                 ApiResponse<DeviceDto>.Ok(created, "Device registered successfully."));
         }
 
@@ -170,6 +200,102 @@ namespace OTA.API.Controllers
 
             await _deviceService.ReportStatusAsync(request, cancellationToken);
             return Ok(ApiResponse.OkNoData("Status report received."));
+        }
+
+        /// <summary>
+        /// Registers multiple devices in a single request (bulk upload).
+        /// Each row is processed independently; failures are reported without aborting the batch.
+        /// Requires CanManageDevices.
+        /// </summary>
+        [HttpPost("bulk")]
+        [Authorize(Policy = "CanManageDevices")]
+        [ProducesResponseType(typeof(ApiResponse<BulkRegisterResult>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> BulkRegisterDevices(
+            [FromBody] BulkRegisterDeviceRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse<BulkRegisterResult>.Fail("Validation failed.", errors));
+            }
+
+            var result = await _deviceService.BulkRegisterDevicesAsync(
+                request, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+
+            var message = result.Failed == 0
+                ? $"All {result.Succeeded} device(s) registered successfully."
+                : $"{result.Succeeded} succeeded, {result.Failed} failed.";
+
+            return Ok(ApiResponse<BulkRegisterResult>.Ok(result, message));
+        }
+
+        /// <summary>Reactivates a suspended device. Requires CanManageDevices.</summary>
+        [HttpPost("{id}/activate")]
+        [Authorize(Policy = "CanManageDevices")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> ActivateDevice(string id, CancellationToken cancellationToken = default)
+        {
+            await _deviceService.ActivateDeviceAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse.OkNoData("Device activated successfully."));
+        }
+
+        /// <summary>Returns paginated OTA update history for a device. Requires CanViewDevices.</summary>
+        [HttpGet("{id}/ota-history")]
+        [Authorize(Policy = "CanViewDevices")]
+        [ProducesResponseType(typeof(ApiResponse<List<DeviceOtaHistoryItemDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetDeviceOtaHistory(
+            string id,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20,
+            CancellationToken cancellationToken = default)
+        {
+            var result = await _deviceService.GetDeviceOtaHistoryAsync(id, page, pageSize, cancellationToken);
+            var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
+            return Ok(ApiResponse<List<DeviceOtaHistoryItemDto>>.Ok(result.Items, "OTA history retrieved successfully.", pagination));
+        }
+
+        /// <summary>
+        /// Returns approved firmware versions compatible with a device's model.
+        /// Used to populate the firmware selection dropdown when pushing firmware to a device.
+        /// Requires CanViewDevices.
+        /// </summary>
+        [HttpGet("{id}/available-firmware")]
+        [Authorize(Policy = "CanViewDevices")]
+        [ProducesResponseType(typeof(ApiResponse<List<AvailableFirmwareDto>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetAvailableFirmware(string id, CancellationToken cancellationToken = default)
+        {
+            var firmware = await _deviceService.GetAvailableFirmwareAsync(id, cancellationToken);
+            return Ok(ApiResponse<List<AvailableFirmwareDto>>.Ok(firmware, $"{firmware.Count} firmware version(s) available."));
+        }
+
+        /// <summary>
+        /// Pushes a specific firmware version to a device by creating a direct OTA job.
+        /// The device will receive this firmware on its next check-update request.
+        /// Requires CanManageDevices.
+        /// </summary>
+        [HttpPost("{id}/push-firmware")]
+        [Authorize(Policy = "CanManageDevices")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> PushFirmware(
+            string id,
+            [FromBody] PushFirmwareRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse<object>.Fail("Validation failed.", errors));
+            }
+
+            var jobId = await _deviceService.PushFirmwareToDeviceAsync(
+                id, request.FirmwareVersionId, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse<object>.Ok(new { jobId }, "Firmware push queued successfully."));
         }
 
         /// <summary>Suspends a device. Requires CanManageDevices.</summary>

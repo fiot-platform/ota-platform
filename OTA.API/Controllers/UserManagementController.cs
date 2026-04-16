@@ -121,16 +121,29 @@ namespace OTA.API.Controllers
         }
 
         /// <summary>
-        /// Soft-deactivates a user account. SuperAdmin only.
+        /// Soft-deactivates a user account. SuperAdmin and PlatformAdmin.
         /// </summary>
-        [HttpDelete("{id}")]
-        [Authorize(Roles = "SuperAdmin")]
+        [HttpPost("{id}/deactivate")]
+        [Authorize(Policy = "CanManageUsers")]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> DeactivateUser(string id, CancellationToken cancellationToken = default)
         {
             await _userService.DeactivateUserAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData("User deactivated successfully."));
+        }
+
+        /// <summary>
+        /// Permanently deletes a user account. SuperAdmin only.
+        /// </summary>
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "SuperAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DeleteUser(string id, CancellationToken cancellationToken = default)
+        {
+            await _userService.DeleteUserAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse.OkNoData("User deleted successfully."));
         }
 
         /// <summary>
@@ -167,6 +180,33 @@ namespace OTA.API.Controllers
 
             await _userService.AssignRoleAsync(id, request.Role, CurrentUserId, CurrentEmail, CurrentRole, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData($"Role '{request.Role}' assigned successfully."));
+        }
+
+        /// <summary>
+        /// Assigns (replaces) the project scope for a user. SuperAdmin and PlatformAdmin only.
+        /// Sends the complete list of project IDs that should be scoped to this user.
+        /// Pass an empty list to remove all project restrictions.
+        /// </summary>
+        [HttpPost("{id}/assign-projects")]
+        [Authorize(Policy = "CanManageUsers")]
+        [ProducesResponseType(typeof(ApiResponse<UserDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> AssignProjects(
+            string id,
+            [FromBody] AssignProjectsRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse<UserDto>.Fail("Validation failed.", errors));
+            }
+
+            var updated = await _userService.AssignProjectsAsync(
+                id, request.ProjectIds, CurrentUserId, CurrentEmail, CurrentRole, ClientIp, cancellationToken);
+
+            return Ok(ApiResponse<UserDto>.Ok(updated, "Project scope updated successfully."));
         }
     }
 

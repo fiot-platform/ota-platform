@@ -24,6 +24,7 @@ namespace OTA.API.Services
         private readonly IOtaJobRepository _jobRepository;
         private readonly IProjectRepository _projectRepository;
         private readonly IUserRepository _userRepository;
+        private readonly IRepositoryMasterRepository _repositoryRepository;
         private readonly ILogger<ReportService> _logger;
 
         /// <summary>Initialises a new instance of <see cref="ReportService"/>.</summary>
@@ -34,6 +35,7 @@ namespace OTA.API.Services
             IOtaJobRepository jobRepository,
             IProjectRepository projectRepository,
             IUserRepository userRepository,
+            IRepositoryMasterRepository repositoryRepository,
             ILogger<ReportService> logger)
         {
             _deviceRepository = deviceRepository ?? throw new ArgumentNullException(nameof(deviceRepository));
@@ -42,6 +44,7 @@ namespace OTA.API.Services
             _jobRepository = jobRepository ?? throw new ArgumentNullException(nameof(jobRepository));
             _projectRepository = projectRepository ?? throw new ArgumentNullException(nameof(projectRepository));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
+            _repositoryRepository = repositoryRepository ?? throw new ArgumentNullException(nameof(repositoryRepository));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -65,9 +68,14 @@ namespace OTA.API.Services
                 var activeDevices = devices.Count(d => d.Status == DeviceStatus.Active);
                 var suspendedDevices = devices.Count(d => d.Status == DeviceStatus.Suspended);
                 var offlineDevices = devices.Count(d => d.LastSeen < DateTime.UtcNow.AddMinutes(-30));
+                var devicesUpdating = devices.Count(d =>
+                    d.OtaStatus == "start" || d.OtaStatus == "inprogress");
 
-                // Firmware status counts
-                var firmwareStatusCounts = await _firmwareRepository.CountByStatusAsync(cancellationToken);
+                // Firmware status counts — group in memory to avoid BsonNull issues in CountByStatusAsync aggregation
+                var allFirmwareForCounts = await _firmwareRepository.GetAllAsync(cancellationToken);
+                var firmwareStatusCounts = allFirmwareForCounts
+                    .GroupBy(f => f.Status)
+                    .ToDictionary(g => g.Key, g => (long)g.Count());
 
                 // Rollout counts
                 var activeRollouts = (await _rolloutRepository.GetByStatusAsync(RolloutStatus.Active, cancellationToken)).Count;
@@ -78,7 +86,11 @@ namespace OTA.API.Services
                 if (role == UserRole.CustomerAdmin && !string.IsNullOrWhiteSpace(customerId))
                     totalProjects = (await _projectRepository.GetByCustomerIdAsync(customerId, cancellationToken)).Count;
                 else
-                    totalProjects = await _projectRepository.CountAsync(string.Empty, cancellationToken);
+                    totalProjects = await _projectRepository.CountAsync(string.Empty, null, cancellationToken);
+
+                // Repository counts
+                var allReposForCount = await _repositoryRepository.GetAllAsync(cancellationToken);
+                long totalRepositories = allReposForCount.Count;
 
                 // User counts (SuperAdmin only view)
                 long totalUsers = 0;
@@ -91,12 +103,15 @@ namespace OTA.API.Services
                     ActiveDevices = activeDevices,
                     SuspendedDevices = suspendedDevices,
                     OfflineDevices = offlineDevices,
+                    DevicesUpdating = devicesUpdating,
                     TotalFirmware = (int)firmwareStatusCounts.Values.Sum(),
                     ApprovedFirmware = (int)firmwareStatusCounts.GetValueOrDefault(FirmwareStatus.Approved),
                     PendingApprovalFirmware = (int)firmwareStatusCounts.GetValueOrDefault(FirmwareStatus.PendingApproval),
+                    PendingQAFirmware = (int)firmwareStatusCounts.GetValueOrDefault(FirmwareStatus.PendingQA),
                     ActiveRollouts = activeRollouts,
                     CompletedRollouts = completedRollouts,
                     TotalProjects = (int)totalProjects,
+                    TotalRepositories = (int)totalRepositories,
                     TotalUsers = (int)totalUsers,
                     GeneratedAt = DateTime.UtcNow
                 };
@@ -260,6 +275,313 @@ namespace OTA.API.Services
             {
                 _logger.LogError(ex, "Failed to get device update status.");
                 throw new InvalidOperationException("Failed to get device update status.", ex);
+            }
+        }
+
+        // ── Extended report implementations ───────────────────────────────────
+
+        /// <inheritdoc/>
+        public async Task<List<UserReportDto>> GetUsersReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var users = await _userRepository.GetAllAsync(cancellationToken);
+                return users.Select(u => new UserReportDto
+                {
+                    UserId      = u.UserId,
+                    Name        = u.Name,
+                    Email       = u.Email,
+                    Role        = u.Role.ToString(),
+                    CustomerId  = u.CustomerId,
+                    IsActive    = u.IsActive,
+                    LastLoginAt = u.LastLoginAt,
+                    CreatedAt   = u.CreatedAt
+                }).OrderBy(u => u.Name).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate users report.");
+                throw new InvalidOperationException("Failed to generate users report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<ProjectReportDto>> GetProjectsReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var projects = await _projectRepository.GetAllAsync(cancellationToken);
+                var allRepos = await _repositoryRepository.GetAllAsync(cancellationToken);
+                var allFirmware = await _firmwareRepository.GetAllAsync(cancellationToken);
+                var activeRollouts = await _rolloutRepository.GetByStatusAsync(RolloutStatus.Active, cancellationToken);
+
+                var repoCountByProject = allRepos
+                    .GroupBy(r => r.ProjectId)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                var firmwareCountByProject = allFirmware
+                    .GroupBy(f => f.ProjectId)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                var activeRolloutCountByProject = activeRollouts
+                    .GroupBy(r => r.ProjectId)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                return projects.Select(p => new ProjectReportDto
+                {
+                    ProjectId          = p.ProjectId,
+                    Name               = p.Name,
+                    CustomerId         = p.CustomerId,
+                    CustomerName       = p.CustomerName,
+                    RepositoryCount    = repoCountByProject.GetValueOrDefault(p.ProjectId),
+                    FirmwareCount      = firmwareCountByProject.GetValueOrDefault(p.ProjectId),
+                    ActiveRolloutCount = activeRolloutCountByProject.GetValueOrDefault(p.ProjectId),
+                    IsActive           = p.IsActive,
+                    CreatedAt          = p.CreatedAt
+                }).OrderBy(p => p.Name).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate projects report.");
+                throw new InvalidOperationException("Failed to generate projects report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<RepositoryReportDto>> GetRepositoriesReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var repos = await _repositoryRepository.GetAllAsync(cancellationToken);
+                var projects = await _projectRepository.GetAllAsync(cancellationToken);
+                var allFirmware = await _firmwareRepository.GetAllAsync(cancellationToken);
+
+                var projectMap = projects.ToDictionary(p => p.ProjectId, p => p.Name);
+                var firmwareCountByRepo = allFirmware
+                    .GroupBy(f => f.RepositoryId)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                return repos.Select(r => new RepositoryReportDto
+                {
+                    RepositoryId      = r.RepositoryId,
+                    Name              = r.GiteaRepoName,
+                    ProjectId         = r.ProjectId,
+                    ProjectName       = projectMap.GetValueOrDefault(r.ProjectId, r.ProjectId),
+                    FirmwareCount     = firmwareCountByRepo.GetValueOrDefault(r.RepositoryId),
+                    WebhookConfigured = r.WebhookConfigured,
+                    LastSyncedAt      = r.LastSyncedAt,
+                    IsActive          = r.IsActive,
+                    CreatedAt         = r.CreatedAt
+                }).OrderBy(r => r.Name).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate repositories report.");
+                throw new InvalidOperationException("Failed to generate repositories report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<FirmwareVersionReportDto>> GetFirmwareVersionsReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var firmware = await _firmwareRepository.GetAllAsync(cancellationToken);
+                var projects = await _projectRepository.GetAllAsync(cancellationToken);
+                var repos    = await _repositoryRepository.GetAllAsync(cancellationToken);
+                var users    = await _userRepository.GetAllAsync(cancellationToken);
+
+                var projectMap = projects.ToDictionary(p => p.ProjectId, p => p.Name);
+                var repoMap    = repos.ToDictionary(r => r.RepositoryId, r => r.GiteaRepoName);
+                var userMap    = users.ToDictionary(u => u.UserId, u => u.Name);
+
+                return firmware.Select(f => new FirmwareVersionReportDto
+                {
+                    FirmwareId        = f.FirmwareId,
+                    Version           = f.Version,
+                    ProjectId         = f.ProjectId,
+                    ProjectName       = projectMap.GetValueOrDefault(f.ProjectId, f.ProjectId),
+                    RepositoryId      = f.RepositoryId,
+                    RepositoryName    = repoMap.GetValueOrDefault(f.RepositoryId, f.RepositoryId),
+                    Channel           = f.Channel.ToString(),
+                    Status            = f.Status.ToString(),
+                    FileSizeBytes     = f.FileSizeBytes,
+                    ApprovedByUserId  = f.ApprovedByUserId,
+                    ApprovedByName    = f.ApprovedByUserId != null
+                                        ? userMap.GetValueOrDefault(f.ApprovedByUserId)
+                                        : null,
+                    CreatedAt         = f.CreatedAt
+                }).OrderByDescending(f => f.CreatedAt).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate firmware versions report.");
+                throw new InvalidOperationException("Failed to generate firmware versions report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<DeviceReportDto>> GetDevicesReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var devices = await _deviceRepository.GetAllAsync(cancellationToken);
+                return devices.Select(d => new DeviceReportDto
+                {
+                    DeviceId               = d.DeviceId,
+                    SerialNumber           = d.SerialNumber,
+                    Name                   = d.SiteName,
+                    ProjectId              = d.ProjectId ?? string.Empty,
+                    ProjectName            = d.ProjectName ?? string.Empty,
+                    CurrentFirmwareVersion = d.CurrentFirmwareVersion,
+                    Status                 = d.Status.ToString(),
+                    LastHeartbeatAt        = d.LastHeartbeatAt,
+                    RegisteredAt           = d.RegisteredAt
+                }).OrderBy(d => d.SerialNumber).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate devices report.");
+                throw new InvalidOperationException("Failed to generate devices report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<ProjectRepoFirmwareRowDto>> GetProjectRepoFirmwareReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var projects  = await _projectRepository.GetAllAsync(cancellationToken);
+                var repos     = await _repositoryRepository.GetAllAsync(cancellationToken);
+                var firmware  = await _firmwareRepository.GetAllAsync(cancellationToken);
+
+                var projectMap = projects.ToDictionary(p => p.ProjectId);
+                var repoMap    = repos.ToDictionary(r => r.RepositoryId);
+
+                return firmware.Select(f =>
+                {
+                    projectMap.TryGetValue(f.ProjectId, out var proj);
+                    repoMap.TryGetValue(f.RepositoryId, out var repo);
+                    return new ProjectRepoFirmwareRowDto
+                    {
+                        ProjectId        = f.ProjectId,
+                        ProjectName      = proj?.Name ?? f.ProjectId,
+                        CustomerName     = proj?.CustomerName ?? string.Empty,
+                        RepositoryId     = f.RepositoryId,
+                        RepositoryName   = repo?.GiteaRepoName ?? f.RepositoryId,
+                        FirmwareId       = f.FirmwareId,
+                        FirmwareVersion  = f.Version,
+                        Channel          = f.Channel.ToString(),
+                        FirmwareStatus   = f.Status.ToString(),
+                        FirmwareCreatedAt = f.CreatedAt
+                    };
+                }).OrderBy(r => r.ProjectName).ThenBy(r => r.RepositoryName).ThenBy(r => r.FirmwareVersion).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate project-repo-firmware report.");
+                throw new InvalidOperationException("Failed to generate project-repo-firmware report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<DeviceOtaHistoryRowDto>> GetDeviceOtaHistoryAsync(string? deviceId, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                List<OtaJobEntity> jobs;
+                if (!string.IsNullOrWhiteSpace(deviceId))
+                    jobs = await _jobRepository.GetByDeviceIdAsync(deviceId, cancellationToken);
+                else
+                    jobs = await _jobRepository.GetAllAsync(cancellationToken);
+
+                var devices = await _deviceRepository.GetAllAsync(cancellationToken);
+                var deviceMap = devices.ToDictionary(d => d.DeviceId);
+
+                return jobs.Select(j =>
+                {
+                    deviceMap.TryGetValue(j.DeviceId, out var device);
+                    return new DeviceOtaHistoryRowDto
+                    {
+                        DeviceId        = j.DeviceId,
+                        DeviceSerial    = j.DeviceSerialNumber,
+                        DeviceName      = device?.SiteName,
+                        ProjectName     = device?.ProjectName ?? string.Empty,
+                        FirmwareVersion = j.FirmwareVersion,
+                        JobStatus       = j.Status.ToString(),
+                        StartedAt       = j.StartedAt,
+                        CompletedAt     = j.CompletedAt
+                    };
+                }).OrderByDescending(r => r.StartedAt ?? r.CompletedAt).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate device OTA history report.");
+                throw new InvalidOperationException("Failed to generate device OTA history report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<DailyOtaProgressDto>> GetDailyOtaProgressAsync(int days, CancellationToken cancellationToken = default)
+        {
+            if (days < 1) days = 14;
+
+            try
+            {
+                var allJobs = await _jobRepository.GetAllAsync(cancellationToken);
+                var fromDate = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+                var result = new List<DailyOtaProgressDto>();
+                for (int i = 0; i < days; i++)
+                {
+                    var date = fromDate.AddDays(i);
+                    var dayJobs = allJobs.Where(j => j.CreatedAt.Date == date).ToList();
+
+                    result.Add(new DailyOtaProgressDto
+                    {
+                        Date       = date.ToString("yyyy-MM-dd"),
+                        Total      = dayJobs.Count,
+                        Succeeded  = dayJobs.Count(j => j.Status == OtaJobStatus.Succeeded),
+                        Failed     = dayJobs.Count(j => j.Status == OtaJobStatus.Failed),
+                        InProgress = dayJobs.Count(j => j.Status == OtaJobStatus.InProgress),
+                        Queued     = dayJobs.Count(j => j.Status == OtaJobStatus.Queued || j.Status == OtaJobStatus.Created),
+                        Cancelled  = dayJobs.Count(j => j.Status == OtaJobStatus.Cancelled)
+                    });
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate daily OTA progress report for {Days} days.", days);
+                throw new InvalidOperationException("Failed to generate daily OTA progress report.", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<List<FirmwareStageReportDto>> GetFirmwareStageReportAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // Group in memory to avoid BsonNull issues in CountByStatusAsync aggregation
+                var allFirmware = await _firmwareRepository.GetAllAsync(cancellationToken);
+                var total = allFirmware.Count;
+
+                return allFirmware
+                    .GroupBy(f => f.Status)
+                    .Select(g => new FirmwareStageReportDto
+                    {
+                        Stage      = g.Key.ToString(),
+                        Count      = g.Count(),
+                        Percentage = total > 0 ? Math.Round((double)g.Count() / total * 100, 1) : 0
+                    })
+                    .OrderByDescending(s => s.Count)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate firmware stage report.");
+                throw new InvalidOperationException("Failed to generate firmware stage report.", ex);
             }
         }
     }

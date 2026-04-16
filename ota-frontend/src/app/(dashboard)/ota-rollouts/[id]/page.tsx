@@ -54,13 +54,15 @@ export default function RolloutDetailPage() {
   const { data: rollout, isLoading: rolloutLoading } = useQuery({
     queryKey: ['rollout', id],
     queryFn: () => otaService.getRolloutById(id),
-    refetchInterval: rollout?.status === RolloutStatus.InProgress ? 10000 : false,
+    refetchInterval: (query) =>
+      query.state.data?.status === RolloutStatus.InProgress ? 10000 : false,
   })
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['rollout-summary', id],
     queryFn: () => otaService.getRolloutSummary(id),
-    refetchInterval: rollout?.status === RolloutStatus.InProgress ? 10000 : false,
+    refetchInterval: (query) =>
+      query.state.data?.status === RolloutStatus.InProgress ? 10000 : false,
   })
 
   const { data: jobs, isLoading: jobsLoading } = useQuery({
@@ -208,12 +210,12 @@ export default function RolloutDetailPage() {
             </button>
             <RoleGuard module="OtaRollouts" action="execute">
               {rollout.status === RolloutStatus.Draft && (
-                <button onClick={() => setConfirmAction('start')} className="btn-primary bg-success-600 hover:bg-success-700">
+                <button onClick={() => setConfirmAction('start')} className="btn-success">
                   <Play className="w-4 h-4" /> Start Rollout
                 </button>
               )}
               {rollout.status === RolloutStatus.InProgress && (
-                <button onClick={() => setConfirmAction('pause')} className="btn-primary bg-warning-500 hover:bg-warning-600">
+                <button onClick={() => setConfirmAction('pause')} className="btn-warning">
                   <Pause className="w-4 h-4" /> Pause
                 </button>
               )}

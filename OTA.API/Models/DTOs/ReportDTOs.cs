@@ -51,6 +51,22 @@ namespace OTA.API.Models.DTOs
         /// <summary>UTC timestamp when this summary was generated.</summary>
         public DateTime GeneratedAt { get; set; }
 
+        // ── Aliases for frontend compatibility ────────────────────────────────
+
+        /// <summary>Alias for TotalFirmware (frontend uses totalFirmwareVersions).</summary>
+        public int TotalFirmwareVersions => TotalFirmware;
+
+        /// <summary>Alias for PendingApprovalFirmware (frontend uses pendingApprovals).</summary>
+        public int PendingApprovals => PendingApprovalFirmware;
+
+        // ── Role-specific extras ──────────────────────────────────────────────
+
+        /// <summary>Number of firmware versions in PendingQA status (for ReleaseManager dashboard).</summary>
+        public int PendingQAFirmware { get; set; }
+
+        /// <summary>Number of devices currently receiving an OTA update via MQTT (otaStatus = start/inprogress).</summary>
+        public int DevicesUpdating { get; set; }
+
         /// <summary>Firmware version counts broken down by status.</summary>
         public FirmwareStatusCountsDto FirmwareCounts { get; set; } = new();
 
@@ -256,5 +272,130 @@ namespace OTA.API.Models.DTOs
 
         /// <summary>Granularity of trend charts: "day" or "week". Defaults to "day".</summary>
         public string Granularity { get; set; } = "day";
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Extended Report DTOs (9 new report pages)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>One row in the Users report table.</summary>
+    public sealed class UserReportDto
+    {
+        public string UserId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public string? CustomerId { get; set; }
+        public string? CustomerName { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime? LastLoginAt { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>One row in the Projects report table.</summary>
+    public sealed class ProjectReportDto
+    {
+        public string ProjectId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string CustomerId { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public int RepositoryCount { get; set; }
+        public int FirmwareCount { get; set; }
+        public int ActiveRolloutCount { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>One row in the Repositories report table.</summary>
+    public sealed class RepositoryReportDto
+    {
+        public string RepositoryId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string ProjectId { get; set; } = string.Empty;
+        public string ProjectName { get; set; } = string.Empty;
+        public int FirmwareCount { get; set; }
+        public bool WebhookConfigured { get; set; }
+        public DateTime? LastSyncedAt { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>One row in the Firmware Versions report table.</summary>
+    public sealed class FirmwareVersionReportDto
+    {
+        public string FirmwareId { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public string ProjectId { get; set; } = string.Empty;
+        public string ProjectName { get; set; } = string.Empty;
+        public string RepositoryId { get; set; } = string.Empty;
+        public string RepositoryName { get; set; } = string.Empty;
+        public string Channel { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public long FileSizeBytes { get; set; }
+        public string? ApprovedByUserId { get; set; }
+        public string? ApprovedByName { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>One row in the Devices report table.</summary>
+    public sealed class DeviceReportDto
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string SerialNumber { get; set; } = string.Empty;
+        public string? Name { get; set; }
+        public string ProjectId { get; set; } = string.Empty;
+        public string ProjectName { get; set; } = string.Empty;
+        public string? CurrentFirmwareVersion { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public DateTime? LastHeartbeatAt { get; set; }
+        public DateTime RegisteredAt { get; set; }
+    }
+
+    /// <summary>One firmware row in the Project → Repository → Firmware tree report.</summary>
+    public sealed class ProjectRepoFirmwareRowDto
+    {
+        public string ProjectId { get; set; } = string.Empty;
+        public string ProjectName { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string RepositoryId { get; set; } = string.Empty;
+        public string RepositoryName { get; set; } = string.Empty;
+        public string FirmwareId { get; set; } = string.Empty;
+        public string FirmwareVersion { get; set; } = string.Empty;
+        public string Channel { get; set; } = string.Empty;
+        public string FirmwareStatus { get; set; } = string.Empty;
+        public DateTime FirmwareCreatedAt { get; set; }
+    }
+
+    /// <summary>One OTA job row in the Device → OTA History tree report.</summary>
+    public sealed class DeviceOtaHistoryRowDto
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string DeviceSerial { get; set; } = string.Empty;
+        public string? DeviceName { get; set; }
+        public string ProjectName { get; set; } = string.Empty;
+        public string FirmwareVersion { get; set; } = string.Empty;
+        public string JobStatus { get; set; } = string.Empty;
+        public DateTime? StartedAt { get; set; }
+        public DateTime? CompletedAt { get; set; }
+    }
+
+    /// <summary>One day's row in the Daily OTA Progress stacked-bar report.</summary>
+    public sealed class DailyOtaProgressDto
+    {
+        public string Date { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public int Succeeded { get; set; }
+        public int Failed { get; set; }
+        public int InProgress { get; set; }
+        public int Queued { get; set; }
+        public int Cancelled { get; set; }
+    }
+
+    /// <summary>One stage row in the Firmware Version Stage horizontal-bar report.</summary>
+    public sealed class FirmwareStageReportDto
+    {
+        public string Stage { get; set; } = string.Empty;
+        public int Count { get; set; }
+        public double Percentage { get; set; }
     }
 }

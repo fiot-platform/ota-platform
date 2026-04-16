@@ -76,11 +76,8 @@ export function RoleBadge({ role, className }: RoleBadgeProps) {
     PlatformAdmin: 'purple',
     ReleaseManager: 'info',
     QA: 'warning',
-    DevOpsEngineer: 'info',
-    SupportEngineer: 'neutral',
     CustomerAdmin: 'success',
     Viewer: 'neutral',
-    Auditor: 'neutral',
     Device: 'neutral',
   }
 

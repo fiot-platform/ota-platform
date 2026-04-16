@@ -32,11 +32,8 @@ function getAssignableRoles(callerRole: UserRole | null): UserRole[] {
       return [
         UserRole.ReleaseManager,
         UserRole.QA,
-        UserRole.DevOpsEngineer,
-        UserRole.SupportEngineer,
         UserRole.CustomerAdmin,
         UserRole.Viewer,
-        UserRole.Auditor,
       ]
     default:
       return []
@@ -175,7 +172,7 @@ export function CreateUserForm({
               </div>
 
               {/* Customer ID (conditional) */}
-              {(requiresCustomer || [UserRole.CustomerAdmin, UserRole.SupportEngineer].includes(selectedRole)) && (
+              {requiresCustomer && (
                 <div>
                   <label className="label">
                     Customer ID {requiresCustomer && <span className="text-danger-500">*</span>}

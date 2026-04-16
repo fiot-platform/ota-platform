@@ -86,7 +86,7 @@ export function ApproveFirmwareDialog({
             <button
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending}
-              className="btn-primary bg-success-600 hover:bg-success-700"
+              className="btn-success"
             >
               {mutation.isPending ? (
                 <><Loader2 className="w-4 h-4 animate-spin" /> Approving...</>

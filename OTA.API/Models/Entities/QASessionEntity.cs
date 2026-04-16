@@ -135,6 +135,10 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         public string? StartedByUserId { get; set; }
 
+        [BsonElement("startedByName")]
+        [BsonIgnoreIfNull]
+        public string? StartedByName { get; set; }
+
         [BsonElement("completedAt")]
         [BsonIgnoreIfNull]
         [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
