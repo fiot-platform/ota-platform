@@ -164,6 +164,10 @@ namespace OTA.API.Extensions
                 options.AddPolicy("CanManageDevices", p =>
                     p.RequireRole("SuperAdmin", "PlatformAdmin"));
 
+                // Firmware push to device: admins + ReleaseManager
+                options.AddPolicy("CanPushFirmware", p =>
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager"));
+
                 // Audit log access: SuperAdmin, PlatformAdmin, ReleaseManager, QA
                 options.AddPolicy("CanViewAudit", p =>
                     p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA"));
@@ -200,6 +204,16 @@ namespace OTA.API.Extensions
                 // Device view: all except Device role itself
                 options.AddPolicy("CanViewDevices", p =>
                     p.RequireRole("SuperAdmin", "PlatformAdmin", "CustomerAdmin", "ReleaseManager", "QA", "Viewer"));
+
+                // OTA job acknowledgement: SuperAdmin or ReleaseManager
+                options.AddPolicy("CanAcknowledgeOta", p =>
+                    p.RequireRole("SuperAdmin", "ReleaseManager"));
+
+                // Client management
+                options.AddPolicy("CanViewClients", p =>
+                    p.RequireRole("SuperAdmin", "PlatformAdmin", "ReleaseManager", "QA", "CustomerAdmin", "Viewer"));
+                options.AddPolicy("CanManageClients", p =>
+                    p.RequireRole("SuperAdmin", "PlatformAdmin"));
             });
 
             return services;
@@ -260,6 +274,9 @@ namespace OTA.API.Extensions
             // Email notifications
             services.AddScoped<IEmailService, OTA.API.Services.EmailService>();
 
+            // Client management
+            services.AddScoped<IClientService, OTA.API.Services.ClientService>();
+
             return services;
         }
 
@@ -309,6 +326,7 @@ namespace OTA.API.Extensions
             services.AddScoped<IRolloutPolicyRepository, RolloutPolicyRepository>();
             services.AddScoped<IEmailNotificationSettingsRepository, EmailNotificationSettingsRepository>();
             services.AddScoped<INotificationLogRepository, NotificationLogRepository>();
+            services.AddScoped<IClientRepository, ClientRepository>();
 
             return services;
         }

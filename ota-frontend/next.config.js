@@ -64,7 +64,12 @@ const nextConfig = {
     ]
   },
   async rewrites() {
-    return []
+    return [
+      {
+        source: '/api/proxy/:path*',
+        destination: 'http://iot.ssmsportal.com:5001/api/:path*',
+      },
+    ]
   },
   experimental: {
     typedRoutes: false,

@@ -12,7 +12,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30 * 1000,
+            staleTime: 30 * 1000,       // 30 s — queries refetch at most every 30 s
+            gcTime: 5 * 60 * 1000,      // 5 min — keep unused data in memory
+            refetchOnWindowFocus: false, // avoid spurious refetch on tab switch
+            refetchOnReconnect: true,
             retry: (failureCount, error: unknown) => {
               const axiosError = error as { response?: { status?: number } }
               if (axiosError?.response?.status === 401) return false
@@ -20,7 +23,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
               if (axiosError?.response?.status === 404) return false
               return failureCount < 2
             },
-            refetchOnWindowFocus: false,
           },
           mutations: {
             retry: false,

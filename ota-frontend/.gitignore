@@ -29,3 +29,16 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .vercel
+
+# Playwright
+tests/.auth/
+playwright-report/
+test-results/
+.env.test.local
+
+# User Manual (screenshots are large binaries — regenerate via npm run manual)
+user-manual/screenshots/
+user-manual/OTA-Platform-User-Manual.html
+dist-scripts/
+
+.vercel

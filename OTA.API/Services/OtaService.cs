@@ -120,6 +120,11 @@ namespace OTA.API.Services
 
             await _jobRepository.BulkInsertAsync(jobs, cancellationToken);
 
+            // Mark every targeted device as having an active OTA job so they show up in the
+            // Pending tab on the Device OTA screen, stamped with the target firmware version.
+            await _deviceRepository.SetActiveOtaJobBulkAsync(
+                initialBatch.Select(d => d.Id), true, firmware.Version, cancellationToken);
+
             _logger.LogInformation("Rollout '{RolloutId}' created for {Count} devices by '{Email}'.", rollout.Id, initialBatchSize, callerEmail);
 
             await _auditService.LogActionAsync(AuditAction.RolloutCreated, callerUserId, callerEmail, UserRole.SuperAdmin, "Rollout", rollout.Id,

@@ -37,30 +37,47 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [loading, setLoading] = React.useState(false)
 
   // Track last seen unread count to trigger toasts only on new ones
-  const prevUnreadRef = React.useRef<number>(0)
-  const prevIdsRef    = React.useRef<Set<string>>(new Set())
+  const prevUnreadRef    = React.useRef<number>(0)
+  const prevIdsRef       = React.useRef<Set<string>>(new Set())
+  // Suppress toasts on the very first fetch — otherwise the user gets a flood of
+  // pop-ups on every page load for any unread items that piled up earlier.
+  const initialFetchRef  = React.useRef<boolean>(true)
 
   const fetchInbox = React.useCallback(async () => {
     if (!user) return
     try {
       const data = await NotificationService.getInbox(50)
 
-      // Show toast for each new unread notification
-      const newItems = data.notifications.filter(
-        (n) => !n.isRead && !prevIdsRef.current.has(n.id)
-      )
+      // Show toast for each new unread notification. When the user dismisses the
+      // toast (X click, swipe, or auto-timeout), mark it read on the backend so
+      // the next poll doesn't re-deliver it.
+      // Skip toasts on the first fetch — those notifications were generated before
+      // this session and would otherwise flood the screen on every page load.
+      const newItems = initialFetchRef.current
+        ? []
+        : data.notifications.filter(
+            (n) => !n.isRead && !prevIdsRef.current.has(n.id)
+          )
       newItems.forEach((n) => {
         toast({
           title: n.title,
           description: n.body,
           variant: 'info',
           duration: 6000,
+          onDismiss: () => {
+            NotificationService.markAsRead(n.id).catch(() => { /* non-critical */ })
+            setNotifications((prev) =>
+              prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x))
+            )
+            setUnreadCount((c) => Math.max(0, c - 1))
+          },
         })
       })
 
       // Update tracking sets
       data.notifications.forEach((n) => prevIdsRef.current.add(n.id))
-      prevUnreadRef.current = data.unreadCount
+      prevUnreadRef.current  = data.unreadCount
+      initialFetchRef.current = false
 
       setNotifications(data.notifications)
       setUnreadCount(data.unreadCount)

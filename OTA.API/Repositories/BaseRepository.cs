@@ -44,12 +44,15 @@ namespace OTA.API.Repositories
 
             try
             {
-                var filter = Builders<T>.Filter.Eq("_id", ObjectId.Parse(id));
+                if (!ObjectId.TryParse(id, out var objectId))
+                    throw new ArgumentException($"The value '{id}' is not a valid ObjectId.", nameof(id));
+
+                var filter = Builders<T>.Filter.Eq("_id", objectId);
                 return await Collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
             }
-            catch (FormatException ex)
+            catch (ArgumentException)
             {
-                throw new ArgumentException($"The value '{id}' is not a valid ObjectId.", nameof(id), ex);
+                throw;
             }
             catch (Exception ex)
             {

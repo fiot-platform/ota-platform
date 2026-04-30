@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using MQTTnet.Client;
 using OTA.API.Models.DTOs;
+using OTA.API.Models.Entities;
 using OTA.API.Models.Enums;
 using OTA.API.Models.Settings;
 using OTA.API.Repositories.Interfaces;
@@ -265,24 +266,63 @@ namespace OTA.API.BackgroundJobs
                 await deviceRepo.UpdateFirmwareVersionAsync(device.Id, request.CurrentVersion, cancellationToken);
             }
 
-            // Check whether an update is available via the firmware repository.
             var firmwareRepo = scope.ServiceProvider.GetRequiredService<IFirmwareRepository>();
 
-            var candidates = await firmwareRepo.GetApprovedForModelAsync(
-                device.Model,
-                device.HardwareRevision,
-                null,   // match any channel — firmware channel assignment is not used to restrict OTA delivery
-                cancellationToken);
-
-            var versionSvc = scope.ServiceProvider.GetRequiredService<IVersionComparisonService>();
             var currentVersion = string.IsNullOrWhiteSpace(request.CurrentVersion)
                 ? (device.CurrentFirmwareVersion ?? "0.0.0")
                 : request.CurrentVersion;
 
-            var best = candidates
-                .Where(f => versionSvc.IsCompatible(f, device))
-                .OrderByDescending(f => f.Version, StringComparer.Ordinal)
-                .FirstOrDefault(f => versionSvc.IsNewerVersion(currentVersion, f.Version));
+            FirmwareVersionEntity? best = null;
+
+            // ── 1. Honor a queued direct-push job first (Release Manager intent) ──
+            // If the Release Manager pushed a specific firmware via the Device OTA screen,
+            // there will be an OTA job in Queued (or InProgress) state for this device.
+            // That explicit choice MUST win over model-based discovery; otherwise we'd
+            // ship the latest "approved" firmware instead of the one the user selected.
+            var jobRepo = scope.ServiceProvider.GetRequiredService<IOtaJobRepository>();
+            var deviceJobs = await jobRepo.GetByDeviceIdAsync(device.Id, cancellationToken);
+            var pushedJob = deviceJobs
+                .Where(j => j.Status == OtaJobStatus.Queued || j.Status == OtaJobStatus.InProgress)
+                .OrderByDescending(j => j.CreatedAt)
+                .FirstOrDefault();
+
+            if (pushedJob != null)
+            {
+                var jobFirmware = await firmwareRepo.GetByIdAsync(pushedJob.FirmwareId, cancellationToken);
+                if (jobFirmware != null && !string.IsNullOrWhiteSpace(jobFirmware.DownloadUrl))
+                {
+                    best = jobFirmware;
+                    _logger.LogInformation(
+                        "MQTT: Serving Release-Manager-pushed firmware v{Version} (job '{JobId}') to device '{DeviceId}'.",
+                        jobFirmware.Version, pushedJob.JobId, request.DeviceId);
+                }
+            }
+
+            // ── 2. Fall back to model-based discovery if no job was pushed ──
+            if (best is null)
+            {
+                var candidates = await firmwareRepo.GetApprovedForModelAsync(
+                    device.Model,
+                    device.HardwareRevision,
+                    null,   // match any channel — firmware channel assignment is not used to restrict OTA delivery
+                    cancellationToken);
+
+                var versionSvc = scope.ServiceProvider.GetRequiredService<IVersionComparisonService>();
+
+                best = candidates
+                    .Where(f => versionSvc.IsCompatible(f, device))
+                    .OrderByDescending(f => f.Version, StringComparer.Ordinal)
+                    .FirstOrDefault(f => versionSvc.IsNewerVersion(currentVersion, f.Version));
+
+                // Skip firmware that has no download URL — device can't fetch it.
+                if (best is not null && string.IsNullOrWhiteSpace(best.DownloadUrl))
+                {
+                    _logger.LogWarning(
+                        "MQTT: Best firmware v{Version} for device '{DeviceId}' has no download URL — skipping OTA dispatch.",
+                        best.Version, request.DeviceId);
+                    best = null;
+                }
+            }
 
             if (best is null)
             {
@@ -365,6 +405,11 @@ namespace OTA.API.BackgroundJobs
                 return;
             }
 
+            // Normalise device-reported status to the platform's canonical vocabulary.
+            // Devices may emit variants like "started", "in-progress", "rolled-back" — map them
+            // to the strings used everywhere else in the system.
+            status.Status = NormaliseOtaStatus(status.Status);
+
             _logger.LogInformation(
                 "MQTT: Status update from '{DeviceId}' — Status='{Status}', Progress={Progress}%, " +
                 "Version='{Version}', ErrorCode={ErrorCode}.",
@@ -385,13 +430,32 @@ namespace OTA.API.BackgroundJobs
             // Always sync heartbeat on any status packet.
             await deviceRepo.UpdateHeartbeatAsync(device.Id, DateTime.UtcNow, cancellationToken);
 
-            // Persist live OTA progress for every packet so the dashboard stays current.
-            await deviceRepo.UpdateOtaProgressAsync(
-                device.Id,
-                status.Status,
-                status.Progress,
-                status.CurrentVersion,
-                cancellationToken);
+            // Persist live OTA progress for every packet so the dashboard stays current —
+            // BUT only when the reported version matches the firmware we actually pushed
+            // (or no push is active). Stale messages from a prior OTA must not overwrite
+            // the progress fields and confuse the dashboard.
+            var stalePacket =
+                !string.IsNullOrWhiteSpace(device.PendingFirmwareVersion) &&
+                !string.IsNullOrWhiteSpace(status.CurrentVersion) &&
+                !string.Equals(device.PendingFirmwareVersion.Trim(),
+                               status.CurrentVersion.Trim(),
+                               StringComparison.OrdinalIgnoreCase);
+
+            if (!stalePacket)
+            {
+                await deviceRepo.UpdateOtaProgressAsync(
+                    device.Id,
+                    status.Status,
+                    status.Progress,
+                    status.CurrentVersion,
+                    cancellationToken);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "MQTT: Skipping OTA progress write for stale packet from '{DeviceId}' (reported v{Reported}, pending v{Pending}).",
+                    deviceId, status.CurrentVersion, device.PendingFirmwareVersion);
+            }
 
             // Publish device data to the device's configured publish topic on every OTA status update.
             var publishTopic = !string.IsNullOrWhiteSpace(device.PublishTopic)
@@ -435,33 +499,158 @@ namespace OTA.API.BackgroundJobs
                 }, cancellationToken);
             }
 
-            // On start — record the version the device is currently running before the update.
-            if (string.Equals(status.Status, "start", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(status.CurrentVersion))
+            // On start — log only. We deliberately DO NOT call UpdateFirmwareVersionAsync
+            // here: some device firmwares report the *target* version on start/inprogress
+            // packets instead of the currently-installed version, which would prematurely
+            // flip the FIRMWARE column to v1.1.21 while the device is still installing.
+            // The currently-installed version is only authoritative on a "success" packet.
+            if (string.Equals(status.Status, "start", StringComparison.OrdinalIgnoreCase))
             {
-                await deviceRepo.UpdateFirmwareVersionAsync(device.Id, status.CurrentVersion, cancellationToken);
                 _logger.LogInformation(
-                    "MQTT: Device '{DeviceId}' started OTA. Current version recorded as '{Version}'.",
+                    "MQTT: Device '{DeviceId}' started OTA (reported version '{Version}').",
                     deviceId, status.CurrentVersion);
             }
 
-            // On success — update to the newly installed version.
+            // A terminal status report only invalidates the active job when the device is
+            // reporting the version we actually pushed. Stale messages (e.g. retained MQTT
+            // success for a previous firmware) must NOT wipe HasActiveOtaJob — otherwise a
+            // device that has just been queued for v1.1.21 falls out of the Pending tab the
+            // moment a leftover "success: v1.1.20" arrives.
+            //
+            // Match rules:
+            //   - If no PendingFirmwareVersion is stored → no active push → behave as before.
+            //   - If PendingFirmwareVersion matches reported CurrentVersion → real terminal
+            //     for the active push → clear the flag.
+            //   - Otherwise → stale message, leave the flag alone.
+            bool MatchesActivePush(string? reportedVersion)
+            {
+                if (string.IsNullOrWhiteSpace(device.PendingFirmwareVersion)) return true;
+                if (string.IsNullOrWhiteSpace(reportedVersion)) return false;
+                return string.Equals(
+                    device.PendingFirmwareVersion.Trim(),
+                    reportedVersion.Trim(),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            // Find the active job (Created/Queued/InProgress) for this device whose
+            // FirmwareVersion matches the reported version, and flip it to the supplied
+            // terminal status. Without this, jobs sit at Queued forever and the OTA
+            // History report shows stale rows even after the device finished.
+            var jobRepo = scope.ServiceProvider.GetRequiredService<IOtaJobRepository>();
+            async Task<bool> CompleteActiveJobAsync(OtaJobStatus terminalStatus, string? reportedVersion)
+            {
+                var allJobs = await jobRepo.GetByDeviceIdAsync(device.Id, cancellationToken);
+                var active = allJobs
+                    .Where(j => j.Status == OtaJobStatus.Created
+                             || j.Status == OtaJobStatus.Queued
+                             || j.Status == OtaJobStatus.InProgress)
+                    .Where(j => string.IsNullOrWhiteSpace(reportedVersion)
+                             || string.Equals(j.FirmwareVersion?.Trim(), reportedVersion.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(j => j.CreatedAt)
+                    .FirstOrDefault();
+
+                if (active is null) return false;
+
+                active.Status      = terminalStatus;
+                active.CompletedAt = DateTime.UtcNow;
+                active.UpdatedAt   = DateTime.UtcNow;
+                if (terminalStatus == OtaJobStatus.Failed && string.IsNullOrWhiteSpace(active.FailureReason))
+                    active.FailureReason = $"ErrorCode={status.ErrorCode}";
+
+                await jobRepo.UpdateAsync(active.Id, active, cancellationToken);
+                return true;
+            }
+
+            // On success — update to the newly installed version. We deliberately do NOT
+            // clear OtaStatus/OtaProgress: keeping them at "success / 100%" lets the OTA
+            // Progress cell display "Updated v{version} 100%" until the next push begins
+            // (PushFirmwareToDeviceAsync calls ClearOtaProgressAsync at that point). What
+            // we DO clear is the bookkeeping flag (HasActiveOtaJob + PendingFirmwareVersion)
+            // so the device leaves the Pending tab.
             if (string.Equals(status.Status, "success", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(status.CurrentVersion))
             {
                 await deviceRepo.UpdateFirmwareVersionAsync(device.Id, status.CurrentVersion, cancellationToken);
-                _logger.LogInformation(
-                    "MQTT: Device '{DeviceId}' successfully updated to firmware '{Version}'.",
-                    deviceId, status.CurrentVersion);
+
+                if (MatchesActivePush(status.CurrentVersion))
+                {
+                    await deviceRepo.SetActiveOtaJobAsync(device.Id, false, null, cancellationToken);
+                    var updated = await CompleteActiveJobAsync(OtaJobStatus.Succeeded, status.CurrentVersion);
+                    _logger.LogInformation(
+                        "MQTT: Device '{DeviceId}' successfully updated to firmware '{Version}'. JobUpdated={JobUpdated}.",
+                        deviceId, status.CurrentVersion, updated);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "MQTT: Device '{DeviceId}' reported success for v{Version} but a push for v{Pending} is still active. Treating as stale, keeping Pending state.",
+                        deviceId, status.CurrentVersion, device.PendingFirmwareVersion);
+                }
             }
 
-            // On rollback — log but keep the previous firmware version (already stored).
+            // On failed — clear active flag only when this failure relates to the active push.
+            if (string.Equals(status.Status, "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                if (MatchesActivePush(status.CurrentVersion))
+                {
+                    await deviceRepo.ClearOtaProgressAsync(device.Id, cancellationToken);
+                    await deviceRepo.SetActiveOtaJobAsync(device.Id, false, null, cancellationToken);
+                    var updated = await CompleteActiveJobAsync(OtaJobStatus.Failed, status.CurrentVersion);
+                    _logger.LogWarning(
+                        "MQTT: Device '{DeviceId}' OTA failed. ErrorCode={ErrorCode}. JobUpdated={JobUpdated}.",
+                        deviceId, status.ErrorCode, updated);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "MQTT: Device '{DeviceId}' reported failed for v{Version} but a push for v{Pending} is still active. Stale message ignored.",
+                        deviceId, status.CurrentVersion, device.PendingFirmwareVersion);
+                }
+            }
+
+            // On rollback — same version-match guard.
             if (string.Equals(status.Status, "rollback", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(
-                    "MQTT: Device '{DeviceId}' rolled back to '{Version}'. ErrorCode={ErrorCode}.",
-                    deviceId, status.CurrentVersion, status.ErrorCode);
+                if (MatchesActivePush(status.CurrentVersion))
+                {
+                    await deviceRepo.ClearOtaProgressAsync(device.Id, cancellationToken);
+                    await deviceRepo.SetActiveOtaJobAsync(device.Id, false, null, cancellationToken);
+                    var updated = await CompleteActiveJobAsync(OtaJobStatus.Cancelled, status.CurrentVersion);
+                    _logger.LogWarning(
+                        "MQTT: Device '{DeviceId}' rolled back to '{Version}'. ErrorCode={ErrorCode}. JobUpdated={JobUpdated}.",
+                        deviceId, status.CurrentVersion, status.ErrorCode, updated);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "MQTT: Device '{DeviceId}' reported rollback for v{Version} but a push for v{Pending} is still active. Stale message ignored.",
+                        deviceId, status.CurrentVersion, device.PendingFirmwareVersion);
+                }
             }
+        }
+
+        /// <summary>
+        /// Maps device-reported OTA status strings to the platform's canonical vocabulary
+        /// (start | inprogress | success | failed | rollback). Unknown values are returned
+        /// as-is in lowercase.
+        /// </summary>
+        private static string NormaliseOtaStatus(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+            var s = raw.Trim().ToLowerInvariant();
+            return s switch
+            {
+                "start" or "started" or "starting"           => "start",
+                "inprogress" or "in-progress" or "in_progress"
+                    or "downloading" or "installing"
+                    or "running"                              => "inprogress",
+                "success" or "succeeded" or "completed"
+                    or "complete" or "ok"                     => "success",
+                "failed" or "failure" or "error"              => "failed",
+                "rollback" or "rolled-back" or "rolled_back"
+                    or "rolledback" or "reverted"             => "rollback",
+                _ => s,
+            };
         }
     }
 }

@@ -26,7 +26,10 @@ namespace OTA.API.Services
         private readonly IVersionComparisonService _versionService;
         private readonly IAuditService _auditService;
         private readonly INotificationService _notificationService;
+        private readonly IEmailService _emailService;
         private readonly IMqttService _mqttService;
+        private readonly IRepositoryMasterRepository _repositoryMasterRepository;
+        private readonly IClientRepository _clientRepository;
         private readonly ILogger<DeviceService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -45,18 +48,24 @@ namespace OTA.API.Services
             IVersionComparisonService versionService,
             IAuditService auditService,
             INotificationService notificationService,
+            IEmailService emailService,
             IMqttService mqttService,
+            IRepositoryMasterRepository repositoryMasterRepository,
+            IClientRepository clientRepository,
             ILogger<DeviceService> logger)
         {
-            _deviceRepository    = deviceRepository    ?? throw new ArgumentNullException(nameof(deviceRepository));
-            _firmwareRepository  = firmwareRepository  ?? throw new ArgumentNullException(nameof(firmwareRepository));
-            _jobRepository       = jobRepository       ?? throw new ArgumentNullException(nameof(jobRepository));
-            _otaEventRepository  = otaEventRepository  ?? throw new ArgumentNullException(nameof(otaEventRepository));
-            _versionService      = versionService      ?? throw new ArgumentNullException(nameof(versionService));
-            _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
-            _mqttService         = mqttService         ?? throw new ArgumentNullException(nameof(mqttService));
-            _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
+            _deviceRepository            = deviceRepository            ?? throw new ArgumentNullException(nameof(deviceRepository));
+            _firmwareRepository          = firmwareRepository          ?? throw new ArgumentNullException(nameof(firmwareRepository));
+            _jobRepository               = jobRepository               ?? throw new ArgumentNullException(nameof(jobRepository));
+            _otaEventRepository          = otaEventRepository          ?? throw new ArgumentNullException(nameof(otaEventRepository));
+            _versionService              = versionService              ?? throw new ArgumentNullException(nameof(versionService));
+            _auditService                = auditService                ?? throw new ArgumentNullException(nameof(auditService));
+            _notificationService         = notificationService         ?? throw new ArgumentNullException(nameof(notificationService));
+            _emailService                = emailService                ?? throw new ArgumentNullException(nameof(emailService));
+            _mqttService                 = mqttService                 ?? throw new ArgumentNullException(nameof(mqttService));
+            _repositoryMasterRepository  = repositoryMasterRepository  ?? throw new ArgumentNullException(nameof(repositoryMasterRepository));
+            _clientRepository            = clientRepository            ?? throw new ArgumentNullException(nameof(clientRepository));
+            _logger                      = logger                      ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <inheritdoc/>
@@ -79,6 +88,26 @@ namespace OTA.API.Services
             if (existing != null)
                 throw new InvalidOperationException($"Duplicate identifier: a device with '{request.MacImeiIp}' is already registered.");
 
+            var repositoryId   = !string.IsNullOrWhiteSpace(request.RepositoryId) ? request.RepositoryId.Trim() : null;
+            string? repositoryName = null;
+            if (repositoryId != null)
+            {
+                var repo = await _repositoryMasterRepository.GetByIdAsync(repositoryId, cancellationToken);
+                repositoryName = repo?.Name;
+            }
+
+            // Resolve the client's display name from the supplied CustomerCode so the device
+            // record stores the human-readable name (e.g. "Rax Tech International") rather than
+            // the raw code (e.g. "CUSTOM_00001"). Falls back to the code when no match is found.
+            var customerCode = request.CustomerCode.Trim();
+            string customerName = customerCode;
+            if (!string.IsNullOrWhiteSpace(customerCode))
+            {
+                var client = await _clientRepository.GetByCodeAsync(customerCode, cancellationToken);
+                if (client != null && !string.IsNullOrWhiteSpace(client.Name))
+                    customerName = client.Name;
+            }
+
             var device = new DeviceEntity
             {
                 DeviceId = Guid.NewGuid().ToString(),
@@ -86,10 +115,12 @@ namespace OTA.API.Services
                 MacImeiIp = request.MacImeiIp.Trim(),
                 ProjectName = request.ProjectName.Trim(),
                 Model = request.Model.Trim(),
-                CustomerName = request.CustomerCode.Trim(),
-                CustomerId = request.CustomerCode.Trim(),
+                CustomerName = customerName,
+                CustomerId = customerCode,
                 SiteName = request.ProjectName.Trim(),
                 CurrentFirmwareVersion = request.CurrentFirmwareVersion ?? "0.0.0",
+                RepositoryId = repositoryId,
+                RepositoryName = repositoryName,
                 Status = DeviceStatus.Active,
                 RegisteredAt = DateTime.UtcNow,
                 Tags = new List<string>(),
@@ -101,6 +132,8 @@ namespace OTA.API.Services
             await _deviceRepository.InsertAsync(device, cancellationToken);
 
             _logger.LogInformation("Device '{SerialNumber}' registered by '{Email}'.", device.SerialNumber, callerEmail);
+
+            _ = _emailService.SendCrudNotificationAsync(callerEmail, callerEmail, "Created", "Device", device.MacImeiIp, CancellationToken.None);
 
             await _auditService.LogActionAsync(
                 AuditAction.DeviceRegistered,
@@ -236,42 +269,70 @@ namespace OTA.API.Services
                 ?? throw new KeyNotFoundException($"Device '{request.DeviceId}' not found.");
 
             if (device.Status != DeviceStatus.Active)
+                return new CheckUpdateResponse { HasUpdate = false };
+
+            // Check for a SuperAdmin/ReleaseManager-acknowledged direct-push job first.
+            var deviceJobs = await _jobRepository.GetByDeviceIdAsync(device.Id, cancellationToken);
+            var queuedJob = deviceJobs
+                .Where(j => j.Status == OtaJobStatus.Queued)
+                .OrderByDescending(j => j.CreatedAt)
+                .FirstOrDefault();
+
+            if (queuedJob != null)
             {
-                return new CheckUpdateResponse
+                var jobFirmware = await _firmwareRepository.GetByIdAsync(queuedJob.FirmwareId, cancellationToken);
+                if (jobFirmware != null)
                 {
-                    HasUpdate = false
-                };
+                    queuedJob.Status = OtaJobStatus.InProgress;
+                    queuedJob.StartedAt = DateTime.UtcNow;
+                    queuedJob.UpdatedAt = DateTime.UtcNow;
+                    await _jobRepository.UpdateAsync(queuedJob.Id, queuedJob, cancellationToken);
+
+                    _logger.LogInformation(
+                        "Acknowledged OTA job '{JobId}' served to device '{DeviceId}' for firmware v{Version}.",
+                        queuedJob.JobId, device.DeviceId, jobFirmware.Version);
+
+                    return new CheckUpdateResponse
+                    {
+                        HasUpdate      = true,
+                        JobId          = queuedJob.JobId,
+                        FirmwareVersion = jobFirmware.Version,
+                        DownloadUrl    = jobFirmware.DownloadUrl,
+                        Sha256         = jobFirmware.FileSha256,
+                        FileSizeBytes  = jobFirmware.FileSizeBytes,
+                        ReleaseNotes   = jobFirmware.ReleaseNotes,
+                        IsMandatory    = jobFirmware.IsMandate
+                    };
+                }
             }
 
+            // Fall back to standard approved-firmware discovery (rollout-based flow).
             var candidates = await _firmwareRepository.GetApprovedForModelAsync(
                 device.Model, device.HardwareRevision ?? string.Empty, FirmwareChannel.Production, cancellationToken);
 
             if (!candidates.Any())
-            {
                 return new CheckUpdateResponse { HasUpdate = false };
-            }
 
             var current = device.CurrentFirmwareVersion ?? "0.0.0";
             var bestFirmware = candidates
                 .Where(f => _versionService.IsCompatible(f, device))
+                .Where(f => !f.CheckTrial || f.TrialCompleted)   // skip unverified trial firmware
                 .OrderByDescending(f => f.Version, StringComparer.Ordinal)
                 .FirstOrDefault(f => _versionService.IsNewerVersion(current, f.Version));
 
             if (bestFirmware == null)
-            {
                 return new CheckUpdateResponse { HasUpdate = false };
-            }
 
             return new CheckUpdateResponse
             {
-                HasUpdate = true,
+                HasUpdate       = true,
                 FirmwareVersion = bestFirmware.Version,
-                JobId = bestFirmware.FirmwareId,
-                DownloadUrl = bestFirmware.DownloadUrl,
-                Sha256 = bestFirmware.FileSha256,
-                FileSizeBytes = bestFirmware.FileSizeBytes,
-                ReleaseNotes = bestFirmware.ReleaseNotes,
-                IsMandatory = bestFirmware.IsMandate
+                JobId           = bestFirmware.FirmwareId,
+                DownloadUrl     = bestFirmware.DownloadUrl,
+                Sha256          = bestFirmware.FileSha256,
+                FileSizeBytes   = bestFirmware.FileSizeBytes,
+                ReleaseNotes    = bestFirmware.ReleaseNotes,
+                IsMandatory     = bestFirmware.IsMandate
             };
         }
 
@@ -292,6 +353,11 @@ namespace OTA.API.Services
             job.UpdatedAt = DateTime.UtcNow;
 
             await _jobRepository.UpdateAsync(job.Id, job, cancellationToken);
+
+            // Terminal status reached — clear the device's active-OTA flag so it
+            // moves out of the Pending tab on the Device OTA screen.
+            if (!string.IsNullOrWhiteSpace(job.DeviceId))
+                await _deviceRepository.SetActiveOtaJobAsync(job.DeviceId, false, null, cancellationToken);
 
             _logger.LogInformation("OTA job '{JobId}' status reported: {Status}.", request.JobId, request.Status);
 
@@ -525,23 +591,85 @@ namespace OTA.API.Services
             if (device.Status != DeviceStatus.Active)
                 throw new InvalidOperationException($"Cannot push firmware to a device with status '{device.Status}'. Device must be Active.");
 
-            var firmware = await _firmwareRepository.GetByIdAsync(firmwareVersionId, cancellationToken)
+            // Use GetByFirmwareIdAsync (GUID-based) because the frontend sends the FirmwareId
+            // GUID, not the MongoDB _id ObjectId.
+            var firmware = await _firmwareRepository.GetByFirmwareIdAsync(firmwareVersionId, cancellationToken)
                 ?? throw new KeyNotFoundException($"Firmware version '{firmwareVersionId}' not found.");
+
+            if (string.IsNullOrWhiteSpace(firmware.DownloadUrl))
+                throw new InvalidOperationException(
+                    $"Firmware v{firmware.Version} does not have a download URL. Please re-upload the firmware file before pushing OTA.");
 
             var job = new Models.Entities.OtaJobEntity
             {
-                JobId              = Guid.NewGuid().ToString(),
-                RolloutId          = "direct-push",
-                FirmwareId         = firmware.Id,
-                FirmwareVersion    = firmware.Version,
-                DeviceId           = device.Id,
-                DeviceSerialNumber = device.SerialNumber,
-                Status             = OtaJobStatus.Pending,
-                CreatedAt          = DateTime.UtcNow,
-                UpdatedAt          = DateTime.UtcNow,
+                JobId                = Guid.NewGuid().ToString(),
+                RolloutId            = "direct-push",
+                FirmwareId           = firmware.Id,
+                FirmwareVersion      = firmware.Version,
+                DeviceId             = device.Id,
+                DeviceSerialNumber   = device.SerialNumber,
+                Status               = OtaJobStatus.Queued,
+                CreatedAt            = DateTime.UtcNow,
+                UpdatedAt            = DateTime.UtcNow,
+                AcknowledgedByUserId = callerUserId,
+                AcknowledgedByName   = callerEmail,
+                AcknowledgedAt       = DateTime.UtcNow,
             };
 
             await _jobRepository.InsertAsync(job, cancellationToken);
+
+            // Clear stale OTA progress fields from the device's previous OTA so the
+            // UI does not show the old "Updated vX.Y.Z 100%" label for this new push.
+            await _deviceRepository.ClearOtaProgressAsync(device.Id, cancellationToken);
+
+            // Mark the device as having an active OTA job so it appears in the Pending tab
+            // immediately, before the device next polls /check-update and emits MQTT status.
+            // Stamp the target firmware version so the "New FW" column has a value to show.
+            await _deviceRepository.SetActiveOtaJobAsync(device.Id, true, firmware.Version, cancellationToken);
+
+            // Publish the OTA update payload directly to the device's MQTT topic so the
+            // device firmware can pick it up without polling /check-update or sending its
+            // own otaRequest. Mirrors the payload shape used by HandleOtaRequestAsync.
+            try
+            {
+                var updateEnvelope = new MqttOtaUpdateEnvelope
+                {
+                    OtaUpdate = new MqttOtaUpdate
+                    {
+                        Description       = firmware.ReleaseNotes ?? string.Empty,
+                        Version           = firmware.Version,
+                        DeviceId          = device.SerialNumber,
+                        ReleaseDate       = (firmware.ApprovedAt ?? firmware.CreatedAt).ToString("o"),
+                        Mandatory         = firmware.IsMandate,
+                        RollbackSupported = true,
+                        Files             = new List<MqttFirmwareFile>
+                        {
+                            new MqttFirmwareFile
+                            {
+                                FileIndex   = 1,
+                                DownloadUrl = firmware.DownloadUrl,
+                                FileSize    = firmware.FileSizeBytes,
+                                Checksum    = new MqttChecksum { Type = "SHA256", Value = firmware.FileSha256 }
+                            }
+                        }
+                    }
+                };
+
+                var updatePayload = JsonSerializer.Serialize(updateEnvelope, _jsonOptions);
+                await _mqttService.PublishOtaMetadataAsync(device.SerialNumber, updatePayload, cancellationToken);
+
+                _logger.LogInformation(
+                    "Push: OTA metadata published to device '{DeviceId}' on MQTT. Version='{Version}'.",
+                    device.SerialNumber, firmware.Version);
+            }
+            catch (Exception ex)
+            {
+                // The job is in Mongo and the device flag is set — even if MQTT publish fails,
+                // the device can still pick the job up via /check-update. Log and continue.
+                _logger.LogWarning(ex,
+                    "Push: failed to publish OTA payload for device '{DeviceId}' on MQTT. The job is still queued for /check-update fallback.",
+                    device.SerialNumber);
+            }
 
             _logger.LogInformation(
                 "Direct firmware push: job '{JobId}' created for device '{DeviceId}' with firmware '{Version}' by '{Email}'.",
@@ -595,6 +723,26 @@ namespace OTA.API.Services
             }).ToList();
         }
 
+        /// <inheritdoc/>
+        public async Task<long> BackfillActiveOtaJobFlagAsync(CancellationToken cancellationToken = default)
+        {
+            var queuedJobs     = await _jobRepository.GetByStatusAsync(OtaJobStatus.Queued,     cancellationToken);
+            var inProgressJobs = await _jobRepository.GetByStatusAsync(OtaJobStatus.InProgress, cancellationToken);
+
+            var activeDeviceIds = queuedJobs.Concat(inProgressJobs)
+                .Select(j => j.DeviceId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList();
+
+            var updated = await _deviceRepository.RebuildActiveOtaJobFlagAsync(activeDeviceIds, cancellationToken);
+
+            _logger.LogInformation(
+                "Backfill: HasActiveOtaJob recomputed. {Count} device(s) marked active.", updated);
+
+            return updated;
+        }
+
         // ── Private helpers ─────────────────────────────────────────────────────────
 
         private async Task ChangeDeviceStatusAsync(
@@ -644,6 +792,8 @@ namespace OTA.API.Services
             CustomerName = d.CustomerName,
             CurrentFirmwareVersion = d.CurrentFirmwareVersion,
             PreviousFirmwareVersion = d.PreviousFirmwareVersion,
+            RepositoryId = d.RepositoryId,
+            RepositoryName = d.RepositoryName,
             Status = d.Status.ToString(),
             LastHeartbeatAt = d.LastHeartbeatAt,
             RegisteredAt = d.RegisteredAt,
@@ -656,6 +806,8 @@ namespace OTA.API.Services
             OtaProgress = d.OtaProgress,
             OtaTargetVersion = d.OtaTargetVersion,
             OtaUpdatedAt = d.OtaUpdatedAt,
+            HasActiveOtaJob = d.HasActiveOtaJob,
+            PendingFirmwareVersion = d.PendingFirmwareVersion,
         };
     }
 }

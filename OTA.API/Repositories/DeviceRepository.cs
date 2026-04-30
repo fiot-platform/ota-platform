@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
@@ -47,10 +48,47 @@ namespace OTA.API.Repositories
 
                 new CreateIndexModel<DeviceEntity>(
                     Builders<DeviceEntity>.IndexKeys.Ascending(d => d.Model),
-                    new CreateIndexOptions { Name = "idx_devices_model" })
+                    new CreateIndexOptions { Name = "idx_devices_model" }),
+
+                new CreateIndexModel<DeviceEntity>(
+                    Builders<DeviceEntity>.IndexKeys.Ascending(d => d.HasActiveOtaJob),
+                    new CreateIndexOptions { Name = "idx_devices_hasActiveOtaJob" })
             };
 
             Collection.Indexes.CreateMany(indexModels);
+        }
+
+        /// <summary>
+        /// Overrides the base lookup to accept either a MongoDB ObjectId string or a device GUID
+        /// (the <c>deviceId</c> field). Tries ObjectId first; falls back to the GUID field so that
+        /// callers that hold either identifier can resolve the device without knowing which format
+        /// they have.
+        /// </summary>
+        public override async Task<DeviceEntity?> GetByIdAsync(string id, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ArgumentException("Id must not be null or empty.", nameof(id));
+
+            try
+            {
+                // ── 1. Try MongoDB ObjectId ───────────────────────────────────
+                if (ObjectId.TryParse(id, out var objectId))
+                {
+                    var byOid = await Collection
+                        .Find(Builders<DeviceEntity>.Filter.Eq("_id", objectId))
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (byOid != null) return byOid;
+                }
+
+                // ── 2. Fall back to GUID deviceId field ───────────────────────
+                return await Collection
+                    .Find(Builders<DeviceEntity>.Filter.Eq(d => d.DeviceId, id))
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to retrieve device '{id}'.", ex);
+            }
         }
 
         /// <inheritdoc/>
@@ -143,10 +181,16 @@ namespace OTA.API.Repositories
                 }
 
                 if (!string.IsNullOrWhiteSpace(projectId))
-                    mongoFilter &= Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId);
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Or(
+                        Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId),
+                        Builders<DeviceEntity>.Filter.Eq(d => d.ProjectName, projectId)
+                    );
 
                 if (allowedProjectIds != null)
-                    mongoFilter &= Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds);
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Or(
+                        Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds),
+                        Builders<DeviceEntity>.Filter.In(d => d.ProjectName, allowedProjectIds)
+                    );
 
                 return await Collection.Find(mongoFilter)
                     .SortBy(d => d.SerialNumber)
@@ -181,10 +225,16 @@ namespace OTA.API.Repositories
                 }
 
                 if (!string.IsNullOrWhiteSpace(projectId))
-                    mongoFilter &= Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId);
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Or(
+                        Builders<DeviceEntity>.Filter.Eq(d => d.ProjectId, projectId),
+                        Builders<DeviceEntity>.Filter.Eq(d => d.ProjectName, projectId)
+                    );
 
                 if (allowedProjectIds != null)
-                    mongoFilter &= Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds);
+                    mongoFilter &= Builders<DeviceEntity>.Filter.Or(
+                        Builders<DeviceEntity>.Filter.In(d => d.ProjectId, allowedProjectIds),
+                        Builders<DeviceEntity>.Filter.In(d => d.ProjectName, allowedProjectIds)
+                    );
 
                 return await Collection.CountDocumentsAsync(mongoFilter, null, cancellationToken);
             }
@@ -248,6 +298,80 @@ namespace OTA.API.Repositories
             {
                 throw new InvalidOperationException($"Failed to update firmware version for device '{deviceId}'.", ex);
             }
+        }
+
+        /// <inheritdoc/>
+        public async Task SetActiveOtaJobAsync(string deviceId, bool hasActive, string? pendingFirmwareVersion, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+                throw new ArgumentException("DeviceId must not be null or empty.", nameof(deviceId));
+
+            var filter = Builders<DeviceEntity>.Filter.Eq("_id", ObjectId.Parse(deviceId));
+            var update = Builders<DeviceEntity>.Update
+                .Set(d => d.HasActiveOtaJob, hasActive)
+                .Set(d => d.PendingFirmwareVersion, hasActive ? pendingFirmwareVersion : null)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow);
+
+            await Collection.UpdateOneAsync(filter, update, null, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task SetActiveOtaJobBulkAsync(IEnumerable<string> deviceIds, bool hasActive, string? pendingFirmwareVersion, CancellationToken cancellationToken = default)
+        {
+            var ids = deviceIds?.Where(id => !string.IsNullOrWhiteSpace(id))
+                                .Select(id => ObjectId.Parse(id))
+                                .ToList() ?? new List<ObjectId>();
+            if (ids.Count == 0) return;
+
+            var filter = Builders<DeviceEntity>.Filter.In("_id", ids);
+            var update = Builders<DeviceEntity>.Update
+                .Set(d => d.HasActiveOtaJob, hasActive)
+                .Set(d => d.PendingFirmwareVersion, hasActive ? pendingFirmwareVersion : null)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow);
+
+            await Collection.UpdateManyAsync(filter, update, null, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task<long> RebuildActiveOtaJobFlagAsync(IEnumerable<string> activeDeviceIds, CancellationToken cancellationToken = default)
+        {
+            // Reset every device to false.
+            var resetUpdate = Builders<DeviceEntity>.Update
+                .Set(d => d.HasActiveOtaJob, false)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow);
+            await Collection.UpdateManyAsync(Builders<DeviceEntity>.Filter.Empty, resetUpdate, null, cancellationToken);
+
+            var ids = (activeDeviceIds ?? Enumerable.Empty<string>())
+                .Where(id => ObjectId.TryParse(id, out _))
+                .Select(ObjectId.Parse)
+                .ToList();
+            if (ids.Count == 0) return 0;
+
+            var setUpdate = Builders<DeviceEntity>.Update
+                .Set(d => d.HasActiveOtaJob, true)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow);
+            var result = await Collection.UpdateManyAsync(
+                Builders<DeviceEntity>.Filter.In("_id", ids),
+                setUpdate, null, cancellationToken);
+
+            return result.ModifiedCount;
+        }
+
+        /// <inheritdoc/>
+        public async Task ClearOtaProgressAsync(string deviceId, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+                throw new ArgumentException("DeviceId must not be null or empty.", nameof(deviceId));
+
+            var filter = Builders<DeviceEntity>.Filter.Eq("_id", ObjectId.Parse(deviceId));
+            var update = Builders<DeviceEntity>.Update
+                .Set(d => d.OtaStatus, (string?)null)
+                .Set(d => d.OtaProgress, 0)
+                .Set(d => d.OtaTargetVersion, (string?)null)
+                .Set(d => d.OtaUpdatedAt, DateTime.UtcNow)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow);
+
+            await Collection.UpdateOneAsync(filter, update, null, cancellationToken);
         }
 
         /// <inheritdoc/>

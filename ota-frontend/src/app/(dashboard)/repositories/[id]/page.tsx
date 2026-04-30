@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, GitBranch, Globe, RefreshCw, Loader2,
-  PowerOff, Zap, Calendar, FolderOpen, Hash,
+  PowerOff, Zap, Calendar, FolderOpen, Hash, Building2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { repositoryService } from '@/services/repository.service'
@@ -207,6 +207,13 @@ export default function RepositoryDetailPage() {
                 icon={<FolderOpen className="w-4 h-4" />}
                 label="Project"
                 value={repo.projectName}
+              />
+            )}
+            {repo.clientName && (
+              <InfoRow
+                icon={<Building2 className="w-4 h-4" />}
+                label="Client"
+                value={repo.clientName}
               />
             )}
             <InfoRow

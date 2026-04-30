@@ -90,5 +90,30 @@ namespace OTA.API.Repositories.Interfaces
         /// <param name="otaTargetVersion">Firmware version being installed.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         Task UpdateOtaProgressAsync(string deviceId, string otaStatus, int otaProgress, string? otaTargetVersion, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Clears OtaStatus, OtaProgress, and OtaTargetVersion after a terminal OTA event (success, failed, rollback).
+        /// </summary>
+        Task ClearOtaProgressAsync(string deviceId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Sets the denormalised <c>HasActiveOtaJob</c> flag for a single device and updates
+        /// <c>PendingFirmwareVersion</c>. Pass <paramref name="pendingFirmwareVersion"/> when
+        /// flipping to true; pass null when clearing.
+        /// </summary>
+        Task SetActiveOtaJobAsync(string deviceId, bool hasActive, string? pendingFirmwareVersion, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Sets the denormalised <c>HasActiveOtaJob</c> flag for many devices in one call,
+        /// applying the same <paramref name="pendingFirmwareVersion"/> to all of them.
+        /// </summary>
+        Task SetActiveOtaJobBulkAsync(IEnumerable<string> deviceIds, bool hasActive, string? pendingFirmwareVersion, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Resets <c>HasActiveOtaJob</c> to false on every device, then sets it to true on the
+        /// supplied list of device ids. Used by the SuperAdmin backfill endpoint.
+        /// Returns the number of devices marked as active.
+        /// </summary>
+        Task<long> RebuildActiveOtaJobFlagAsync(IEnumerable<string> activeDeviceIds, CancellationToken cancellationToken = default);
     }
 }

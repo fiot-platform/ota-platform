@@ -17,6 +17,7 @@ export type PermissionModule =
   | 'WebhookEvents'
   | 'RolloutPolicies'
   | 'SystemSettings'
+  | 'Clients'
 
 export type RolePermissions = {
   [module in PermissionModule]: {
@@ -68,6 +69,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: fullAccess,
     RolloutPolicies: fullAccess,
     SystemSettings: fullAccess,
+    Clients: fullAccess,
   },
 
   [UserRole.PlatformAdmin]: {
@@ -83,6 +85,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: { view: true, create: false, update: true, delete: false, approve: false, execute: true, export: false },
     RolloutPolicies: { ...fullAccess, delete: false },
     SystemSettings: { ...readOnly, update: false, delete: false, approve: false, execute: false, export: false },
+    Clients: { ...fullAccess, delete: false },
   },
 
   [UserRole.ReleaseManager]: {
@@ -98,7 +101,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
       execute: false,
       export: false,
     },
-    Devices: readOnly,
+    Devices: { ...readOnly, approve: true },
     OtaRollouts: {
       view: true,
       create: true,
@@ -109,11 +112,12 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
       export: false,
     },
     Users: noAccess,
-    AuditLogs: readOnly,
-    Reports: readOnly,
+    AuditLogs: { ...readOnly, export: true },
+    Reports: { ...readOnly, export: true },
     WebhookEvents: noAccess,
     RolloutPolicies: readOnly,
     SystemSettings: noAccess,
+    Clients: readOnly,
   },
 
   [UserRole.QA]: {
@@ -137,6 +141,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: noAccess,
     RolloutPolicies: readOnly,
     SystemSettings: noAccess,
+    Clients: readOnly,
   },
 
   [UserRole.CustomerAdmin]: {
@@ -152,6 +157,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: noAccess,
     RolloutPolicies: noAccess,
     SystemSettings: noAccess,
+    Clients: readOnly,
   },
 
   [UserRole.Viewer]: {
@@ -167,6 +173,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: noAccess,
     RolloutPolicies: readOnly,
     SystemSettings: noAccess,
+    Clients: readOnly,
   },
 
   [UserRole.Device]: {
@@ -182,6 +189,7 @@ export const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
     WebhookEvents: noAccess,
     RolloutPolicies: noAccess,
     SystemSettings: noAccess,
+    Clients: noAccess,
   },
 }
 

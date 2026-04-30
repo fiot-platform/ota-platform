@@ -54,19 +54,19 @@ namespace OTA.API.Controllers
 
         private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
         {
-            // SuperAdmin and PlatformAdmin see everything — no filtering.
             var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
-            _logger.LogInformation("[ProjectScope] Role={Role}", role);
+
             if (role is "SuperAdmin" or "PlatformAdmin") return null;
 
-            // Fetch live project scope from the database so changes take effect without re-login.
             var userId = CurrentUserId;
-            _logger.LogInformation("[ProjectScope] UserId={UserId}", userId);
             if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
 
             var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
             var scope = user?.ProjectScope ?? new List<string>();
-            _logger.LogInformation("[ProjectScope] UserFound={Found}, Scope=[{Scope}]", user != null, string.Join(",", scope));
+
+            if (scope.Count == 0 && role is not "QA")
+                return null;
+
             return scope;
         }
 

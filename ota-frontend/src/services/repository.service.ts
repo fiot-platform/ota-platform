@@ -32,6 +32,14 @@ export const repositoryService = {
     return response.data.data
   },
 
+  async updateRepository(
+    id: string,
+    data: { name?: string; description?: string; defaultBranch?: string; isActive?: boolean; projectId?: string; clientCode?: string }
+  ): Promise<Repository> {
+    const response = await api.put<ApiResponse<Repository>>(`/repositories/${id}`, data)
+    return response.data.data
+  },
+
   async syncRepository(id: string): Promise<{ message: string }> {
     const response = await api.post<ApiResponse<null>>(`/repositories/${id}/sync`)
     return { message: response.data.message ?? 'Repository synchronised successfully.' }

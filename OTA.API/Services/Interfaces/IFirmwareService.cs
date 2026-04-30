@@ -125,5 +125,33 @@ namespace OTA.API.Services.Interfaces
         /// <param name="ipAddress">The caller's IP address for audit context.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         Task DeprecateFirmwareAsync(string firmwareId, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Marks a Check-Trial firmware as trial-complete, unlocking it for the regular OTA check-update flow.
+        /// Records the tester's remarks and the timestamp of completion.
+        /// </summary>
+        /// <param name="firmwareId">The firmware identifier.</param>
+        /// <param name="remarks">Remarks entered by the tester describing what was verified.</param>
+        /// <param name="callerUserId">UserId of the user completing the trial.</param>
+        /// <param name="callerEmail">Email for audit logging.</param>
+        /// <param name="ipAddress">Caller IP for audit context.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        Task CompleteTrialAsync(string firmwareId, string remarks, string callerUserId, string callerEmail, string ipAddress, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Copies an Approved firmware version into one or more target repositories.
+        /// For each target: downloads the parent's binary, re-uploads it to the target's
+        /// Gitea repo, then creates a new firmware record (status = Approved) referencing
+        /// the new binary URL. Idempotent — targets that already have the same version are
+        /// silently skipped.
+        /// </summary>
+        Task<CopyFirmwareToRepositoriesResponse> CopyFirmwareToRepositoriesAsync(
+            string parentFirmwareId,
+            List<string> targetRepositoryIds,
+            string callerUserId,
+            string callerName,
+            string callerEmail,
+            string ipAddress,
+            CancellationToken cancellationToken = default);
     }
 }

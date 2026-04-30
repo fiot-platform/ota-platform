@@ -62,7 +62,7 @@ export default function RepositoriesReportPage() {
     let rows = raw ?? []
     const q = search.trim().toLowerCase()
     if (q) rows = rows.filter(
-      (r) => r.name.toLowerCase().includes(q) || r.projectName.toLowerCase().includes(q),
+      (r) => r.name.toLowerCase().includes(q) || r.projectName.toLowerCase().includes(q) || (r.clientName ?? '').toLowerCase().includes(q),
     )
     if (filters.isActive !== '') rows = rows.filter((r) => String(r.isActive) === filters.isActive)
     if (filters.webhookConfigured !== '') rows = rows.filter((r) => String(r.webhookConfigured) === filters.webhookConfigured)
@@ -79,6 +79,7 @@ export default function RepositoriesReportPage() {
   const columns: Column<RepositoryReport>[] = [
     { key: 'name', header: 'Repository', cell: (r) => <span className="font-medium text-primary-800">{r.name}</span> },
     { key: 'projectName', header: 'Project', cell: (r) => <span className="text-slate-500">{r.projectName}</span> },
+    { key: 'clientName', header: 'Client', cell: (r) => <span className="text-slate-500">{r.clientName ?? '—'}</span> },
     { key: 'firmwareCount', header: 'Firmware', headerClassName: 'text-right', className: 'text-right', accessor: 'firmwareCount' },
     {
       key: 'webhookConfigured',
@@ -101,7 +102,7 @@ export default function RepositoriesReportPage() {
         subtitle="All registered repositories with sync and firmware status"
         breadcrumbs={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Reports', href: '/reports/firmware-trends' },
+          { label: 'Reports', href: '/reports/device-status' },
           { label: 'Repositories' },
         ]}
       />
@@ -115,7 +116,7 @@ export default function RepositoriesReportPage() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by repository name or project…"
+            placeholder="Search by repository name, project or client…"
             className="flex-1 min-w-[220px] max-w-sm px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-accent-500 transition"
           />
           <FilterPopover fields={FILTER_FIELDS} values={filters} onChange={setFilters} onClear={() => setFilters(EMPTY_FILTERS)} />

@@ -166,12 +166,18 @@ export interface UpdateUserRequest {
 
 // ─── Project ──────────────────────────────────────────────────────────────────
 
+export interface ProjectClientRef {
+  code: string
+  name: string
+}
+
 export interface Project {
   id: string
   name: string
   description?: string
   customerId: string
   customerName: string
+  clients: ProjectClientRef[]
   businessUnit?: string
   giteaOrgName?: string
   tags?: string[]
@@ -185,8 +191,7 @@ export interface Project {
 export interface CreateProjectRequest {
   name: string
   description?: string
-  customerId: string
-  customerName: string
+  clientCodes: string[]
   businessUnit?: string
   giteaOrgName?: string
   tags?: string[]
@@ -195,7 +200,7 @@ export interface CreateProjectRequest {
 export interface UpdateProjectRequest {
   name?: string
   description?: string
-  customerName?: string
+  clientCodes?: string[]
   businessUnit?: string
   giteaOrgName?: string
   tags?: string[]
@@ -211,6 +216,8 @@ export interface Repository {
   giteaUrl?: string
   projectId: string
   projectName?: string
+  clientCode?: string
+  clientName?: string
   description?: string
   defaultBranch: string
   isActive: boolean
@@ -240,6 +247,22 @@ export interface GiteaAsset {
   contentType: string
 }
 
+export interface CopyFirmwareTargetResult {
+  repositoryId: string
+  repositoryName: string
+  clientName: string
+  status: 'created' | 'skipped' | 'failed'
+  reason?: string
+  newFirmwareId?: string
+}
+
+export interface CopyFirmwareToRepositoriesResponse {
+  createdCount: number
+  skippedCount: number
+  failedCount: number
+  results: CopyFirmwareTargetResult[]
+}
+
 export interface FirmwareVersion {
   id: string
   firmwareId?: string
@@ -248,6 +271,7 @@ export interface FirmwareVersion {
   repositoryName?: string
   projectId: string
   projectName?: string
+  clientName?: string
   channel: FirmwareChannel
   status: FirmwareStatus
   releaseNotes?: string
@@ -260,6 +284,10 @@ export interface FirmwareVersion {
   giteaReleaseId?: number
   giteaAssets?: GiteaAsset[]
   isMandate?: boolean
+  checkTrial?: boolean
+  trialCompleted?: boolean
+  trialCompletedAt?: string
+  trialRemarks?: string
   supportedModels?: string[]
   supportedHardwareRevisions?: string[]
   minRequiredVersion?: string
@@ -296,6 +324,7 @@ export interface CreateFirmwareRequest {
   fileSizeBytes?: number
   downloadUrl?: string
   isMandate?: boolean
+  checkTrial?: boolean
   minRequiredVersion?: string
   maxAllowedVersion?: string
   supportedModels?: string[]
@@ -345,6 +374,8 @@ export interface Device {
   siteName?: string
   currentFirmwareVersion?: string
   previousFirmwareVersion?: string
+  repositoryId?: string
+  repositoryName?: string
   status: DeviceStatus
   lastHeartbeatAt?: string
   registeredAt: string
@@ -357,6 +388,10 @@ export interface Device {
   otaProgress?: number
   otaTargetVersion?: string
   otaUpdatedAt?: string
+  // True when an OTA job is Queued or InProgress for this device.
+  hasActiveOtaJob?: boolean
+  // Target firmware version of the active OTA job (set at push, cleared on terminal).
+  pendingFirmwareVersion?: string
 }
 
 export interface RegisterDeviceRequest {
@@ -372,6 +407,7 @@ export interface RegisterDeviceRequest {
   siteName?: string
   currentFirmwareVersion?: string
   publishTopic?: string
+  repositoryId?: string
 }
 
 export interface CheckUpdateRequest {
@@ -632,6 +668,7 @@ export interface RepositoryReport {
   name: string
   projectId: string
   projectName: string
+  clientName?: string
   giteaUrl?: string
   isActive: boolean
   lastSyncedAt?: string
@@ -650,21 +687,29 @@ export interface FirmwareVersionReport {
   channel: FirmwareChannel
   status: FirmwareStatus
   fileSizeBytes?: number
+  createdByName?: string
   createdAt: string
-  approvedAt?: string
+  qaVerifiedByName?: string
+  qaVerifiedAt?: string
   approvedByName?: string
+  approvedAt?: string
+  deviceCount: number
 }
 
 export interface DeviceReport {
   id: string
   serialNumber: string
   name?: string
+  macImeiIp?: string
+  customerName?: string
+  model: string
   projectId: string
   projectName: string
   currentFirmwareVersion?: string
   status: DeviceStatus
   lastHeartbeatAt?: string
   createdAt: string
+  lastOtaAt?: string
 }
 
 export interface ProjectRepoFirmwareRow {
@@ -673,22 +718,44 @@ export interface ProjectRepoFirmwareRow {
   customerName: string
   repositoryId: string
   repositoryName: string
+  firmwareId?: string
   firmwareVersion: string
   channel: FirmwareChannel
   firmwareStatus: FirmwareStatus
+  supportedModels?: string[]
+  fileSizeBytes?: number
+  createdByName?: string
   firmwareCreatedAt: string
+  qaVerifiedByName?: string
+  qaVerifiedAt?: string
+  approvedByName?: string
+  approvedAt?: string
+  deviceCount?: number
 }
 
 export interface DeviceOtaHistoryRow {
   deviceId: string
   deviceSerial: string
   deviceName?: string
+  macImeiIp?: string
+  customerName?: string
+  model: string
   projectName: string
+  repositoryName?: string
+  oldFirmwareVersion?: string
   firmwareVersion: string
-  rolloutId: string
+  currentFirmwareVersion?: string
+  pendingFirmwareVersion?: string
+  rolloutId?: string
   jobStatus: OtaJobStatus
+  otaStatus?: string
+  otaProgress?: number
+  deviceStatus?: string
+  lastHeartbeatAt?: string
   startedAt?: string
   completedAt?: string
+  pushedAt?: string
+  pushedByName?: string
 }
 
 export interface DailyOtaProgress {
@@ -893,4 +960,64 @@ export interface WebhookEventFilters {
   giteaRepo?: string
   page?: number
   pageSize?: number
+}
+
+// ─── Client ───────────────────────────────────────────────────────────────────
+
+export interface Client {
+  id: string
+  clientId: string
+  name: string
+  code: string
+  contactEmail?: string
+  contactPhone?: string
+  address?: string
+  notes?: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+  createdByUserId?: string
+}
+
+export interface CreateClientRequest {
+  name: string
+  code: string
+  contactEmail?: string
+  contactPhone?: string
+  address?: string
+  notes?: string
+}
+
+export interface UpdateClientRequest {
+  name?: string
+  code?: string
+  contactEmail?: string
+  contactPhone?: string
+  address?: string
+  notes?: string
+  isActive?: boolean
+}
+
+export interface ClientFilters {
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+// ─── OTA Acknowledgement ──────────────────────────────────────────────────────
+
+export interface PendingOtaAcknowledgement {
+  id: string
+  jobId: string
+  deviceId: string
+  deviceSerialNumber: string
+  firmwareVersion: string
+  firmwareId: string
+  source: string
+  createdAt: string
+}
+
+export interface AcknowledgeOtaRequest {
+  action: 'acknowledge' | 'reject'
+  notes?: string
 }

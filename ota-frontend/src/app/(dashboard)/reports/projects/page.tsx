@@ -94,7 +94,7 @@ export default function ProjectsReportPage() {
         subtitle="All projects with repository and firmware summary"
         breadcrumbs={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Reports', href: '/reports/firmware-trends' },
+          { label: 'Reports', href: '/reports/device-status' },
           { label: 'Projects' },
         ]}
       />

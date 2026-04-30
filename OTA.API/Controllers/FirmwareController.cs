@@ -53,15 +53,16 @@ namespace OTA.API.Controllers
 
         private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
         {
-            // SuperAdmin and PlatformAdmin see everything — no filtering.
             var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+
+            // Only SuperAdmin and PlatformAdmin see everything
             if (role is "SuperAdmin" or "PlatformAdmin") return null;
 
-            // Fetch live project scope from the database so changes take effect without re-login.
             var userId = CurrentUserId;
             if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
 
             var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
+            // All other roles: restricted to assigned projects only (empty = sees nothing)
             return user?.ProjectScope ?? new List<string>();
         }
 
@@ -348,6 +349,69 @@ namespace OTA.API.Controllers
         {
             await _firmwareService.DeleteFirmwareAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData("Firmware deleted successfully."));
+        }
+
+        /// <summary>
+        /// Marks a Check-Trial firmware as trial-complete, unlocking it for the regular OTA process.
+        /// Restricted to SuperAdmin and ReleaseManager (same roles that can acknowledge OTA jobs).
+        /// </summary>
+        [HttpPost("{id}/complete-trial")]
+        [Authorize(Policy = "CanAcknowledgeOta")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> CompleteTrial(
+            string id,
+            [FromBody] CompleteTrialRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse<object>.Fail("Validation failed.", errors));
+            }
+
+            await _firmwareService.CompleteTrialAsync(id, request.Remarks ?? string.Empty, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
+            return Ok(ApiResponse<object>.Ok(new { firmwareId = id }, "Trial completed. Firmware is now eligible for regular OTA."));
+        }
+
+        /// <summary>
+        /// Copies an Approved firmware version into one or more target client repositories.
+        /// Re-uploads the parent's binary to each target's Gitea repo and creates new firmware
+        /// records (status = Approved). Restricted to ReleaseManager / SuperAdmin / PlatformAdmin.
+        /// Returns per-repository results so the UI can show created / skipped / failed counts.
+        /// </summary>
+        [HttpPost("{id}/copy-to-repositories")]
+        [Authorize(Roles = "ReleaseManager,SuperAdmin,PlatformAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<CopyFirmwareToRepositoriesResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> CopyFirmwareToRepositories(
+            string id,
+            [FromBody] CopyFirmwareToRepositoriesRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
+                return BadRequest(ApiResponse<object>.Fail("Validation failed.", errors));
+            }
+
+            var callerName = User.FindFirstValue("fullName")
+                ?? User.FindFirstValue(ClaimTypes.Name)
+                ?? CurrentEmail;
+
+            var result = await _firmwareService.CopyFirmwareToRepositoriesAsync(
+                id,
+                request.TargetRepositoryIds,
+                CurrentUserId,
+                callerName,
+                CurrentEmail,
+                ClientIp,
+                cancellationToken);
+
+            var msg = $"{result.CreatedCount} created, {result.SkippedCount} skipped, {result.FailedCount} failed.";
+            return Ok(ApiResponse<CopyFirmwareToRepositoriesResponse>.Ok(result, msg));
         }
 
         /// <summary>Deprecates an approved firmware. SuperAdmin and PlatformAdmin only.</summary>

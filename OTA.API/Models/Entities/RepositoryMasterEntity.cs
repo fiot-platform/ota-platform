@@ -21,6 +21,20 @@ namespace OTA.API.Models.Entities
         [BsonElement("projectId")]
         public string ProjectId { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Code of the client this repository is for. When a project serves multiple clients,
+        /// this field disambiguates which client's repos belong to which client. Optional;
+        /// when blank, the repository inherits the project's primary client.
+        /// </summary>
+        [BsonElement("clientCode")]
+        [BsonIgnoreIfNull]
+        public string? ClientCode { get; set; }
+
+        /// <summary>Display name of the client (denormalised from ClientEntity for read efficiency).</summary>
+        [BsonElement("clientName")]
+        [BsonIgnoreIfNull]
+        public string? ClientName { get; set; }
+
         [BsonElement("giteaRepoId")]
         public string GiteaRepoId { get; set; } = string.Empty;
 

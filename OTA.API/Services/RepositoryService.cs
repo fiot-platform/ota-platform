@@ -20,9 +20,11 @@ namespace OTA.API.Services
     {
         private readonly IRepositoryMasterRepository _repoRepository;
         private readonly IProjectRepository _projectRepository;
+        private readonly IClientRepository _clientRepository;
         private readonly IGiteaApiService _giteaApiService;
         private readonly IAuditService _auditService;
         private readonly INotificationService _notificationService;
+        private readonly IEmailService _emailService;
         private readonly ILogger<RepositoryService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -36,16 +38,20 @@ namespace OTA.API.Services
         public RepositoryService(
             IRepositoryMasterRepository repoRepository,
             IProjectRepository projectRepository,
+            IClientRepository clientRepository,
             IGiteaApiService giteaApiService,
             IAuditService auditService,
             INotificationService notificationService,
+            IEmailService emailService,
             ILogger<RepositoryService> logger)
         {
             _repoRepository      = repoRepository      ?? throw new ArgumentNullException(nameof(repoRepository));
             _projectRepository   = projectRepository   ?? throw new ArgumentNullException(nameof(projectRepository));
+            _clientRepository    = clientRepository    ?? throw new ArgumentNullException(nameof(clientRepository));
             _giteaApiService     = giteaApiService     ?? throw new ArgumentNullException(nameof(giteaApiService));
             _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _emailService        = emailService        ?? throw new ArgumentNullException(nameof(emailService));
             _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -111,6 +117,8 @@ namespace OTA.API.Services
                     throw new InvalidOperationException($"Repository '{request.GiteaOwner}/{request.GiteaRepoName}' is already registered (id: {existingByGiteaId.Id}).");
             }
 
+            var (clientCode, clientName) = await ResolveClientAsync(request.ClientCode, cancellationToken);
+
             var entity = new RepositoryMasterEntity
             {
                 GiteaRepoName = request.GiteaRepoName,
@@ -119,6 +127,8 @@ namespace OTA.API.Services
                 GiteaRepoId = giteaRepoId,
                 GiteaUrl = giteaRepo?.HtmlUrl,
                 ProjectId = request.ProjectId,
+                ClientCode = clientCode,
+                ClientName = clientName,
                 DefaultBranch = request.DefaultBranch.Trim() is { Length: > 0 } b ? b : (giteaRepo?.DefaultBranch ?? "main"),
                 IsActive = true,
                 LastSyncedAt = giteaRepo != null ? DateTime.UtcNow : null,
@@ -147,6 +157,8 @@ namespace OTA.API.Services
                 new Dictionary<string, string> { ["type"] = "repository_registered", ["repositoryId"] = entity.Id, ["name"] = entity.GiteaRepoName },
                 cancellationToken: CancellationToken.None);
 
+            _ = _emailService.SendCrudNotificationAsync(callerEmail, callerEmail, "Created", "Repository", $"{entity.GiteaOwner}/{entity.GiteaRepoName}", CancellationToken.None);
+
             return MapToDto(entity);
         }
 
@@ -165,13 +177,31 @@ namespace OTA.API.Services
             var entity = await _repoRepository.GetByIdAsync(repositoryId, cancellationToken)
                 ?? throw new KeyNotFoundException($"Repository '{repositoryId}' not found.");
 
-            var oldSnapshot = JsonSerializer.Serialize(new { entity.Name, entity.Description }, _jsonOptions);
+            var oldSnapshot = JsonSerializer.Serialize(
+                new { entity.Name, entity.Description, entity.DefaultBranch, entity.IsActive, entity.ProjectId },
+                _jsonOptions);
 
             if (!string.IsNullOrWhiteSpace(request.Name))
                 entity.Name = request.Name.Trim();
 
             if (request.Description != null)
                 entity.Description = request.Description.Trim();
+
+            if (!string.IsNullOrWhiteSpace(request.DefaultBranch))
+                entity.DefaultBranch = request.DefaultBranch.Trim();
+
+            if (request.IsActive.HasValue)
+                entity.IsActive = request.IsActive.Value;
+
+            if (!string.IsNullOrWhiteSpace(request.ProjectId))
+                entity.ProjectId = request.ProjectId.Trim();
+
+            if (request.ClientCode != null)
+            {
+                var (clientCode, clientName) = await ResolveClientAsync(request.ClientCode, cancellationToken);
+                entity.ClientCode = clientCode;
+                entity.ClientName = clientName;
+            }
 
             entity.UpdatedAt = DateTime.UtcNow;
             await _repoRepository.UpdateAsync(repositoryId, entity, cancellationToken);
@@ -183,7 +213,9 @@ namespace OTA.API.Services
                 callerUserId, callerEmail, UserRole.SuperAdmin,
                 "Repository", repositoryId,
                 oldSnapshot,
-                JsonSerializer.Serialize(new { entity.Name, entity.Description }, _jsonOptions),
+                JsonSerializer.Serialize(
+                    new { entity.Name, entity.Description, entity.DefaultBranch, entity.IsActive, entity.ProjectId },
+                    _jsonOptions),
                 ipAddress,
                 cancellationToken: cancellationToken);
 
@@ -219,7 +251,20 @@ namespace OTA.API.Services
             if (string.IsNullOrWhiteSpace(repositoryId)) throw new ArgumentException("RepositoryId is required.", nameof(repositoryId));
 
             var entity = await _repoRepository.GetByIdAsync(repositoryId, cancellationToken);
-            return entity == null ? null : MapToDto(entity);
+            if (entity == null) return null;
+
+            string? projectName = null;
+            string? clientName = null;
+            if (!string.IsNullOrWhiteSpace(entity.ProjectId))
+            {
+                var project = MongoDB.Bson.ObjectId.TryParse(entity.ProjectId, out _)
+                    ? await _projectRepository.GetByIdAsync(entity.ProjectId, cancellationToken)
+                    : await _projectRepository.GetByProjectIdAsync(entity.ProjectId, cancellationToken);
+                projectName = project?.Name;
+                clientName = string.IsNullOrWhiteSpace(project?.CustomerName) ? null : project!.CustomerName;
+            }
+
+            return MapToDto(entity, projectName, clientName);
         }
 
         /// <inheritdoc/>
@@ -241,17 +286,27 @@ namespace OTA.API.Services
 
             var items = await _repoRepository.SearchAsync(filter, page, pageSize, effectiveAllowedIds, cancellationToken);
 
-            // Batch-load project names to avoid N+1 queries
+            // Batch-load project names + client names to avoid N+1 queries
             var projectIds = items.Select(r => r.ProjectId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
             var projectNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var clientNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var pid in projectIds)
             {
-                if (!MongoDB.Bson.ObjectId.TryParse(pid, out _)) continue;
-                var project = await _projectRepository.GetByIdAsync(pid, cancellationToken);
-                if (project != null) projectNames[pid] = project.Name;
+                var project = MongoDB.Bson.ObjectId.TryParse(pid, out _)
+                    ? await _projectRepository.GetByIdAsync(pid, cancellationToken)
+                    : await _projectRepository.GetByProjectIdAsync(pid, cancellationToken);
+                if (project != null)
+                {
+                    projectNames[pid] = project.Name;
+                    if (!string.IsNullOrWhiteSpace(project.CustomerName))
+                        clientNames[pid] = project.CustomerName;
+                }
             }
 
-            return items.Select(r => MapToDto(r, projectNames.GetValueOrDefault(r.ProjectId ?? string.Empty))).ToList();
+            return items.Select(r => MapToDto(
+                r,
+                projectNames.GetValueOrDefault(r.ProjectId ?? string.Empty),
+                clientNames.GetValueOrDefault(r.ProjectId ?? string.Empty))).ToList();
         }
 
         /// <inheritdoc/>
@@ -333,9 +388,25 @@ namespace OTA.API.Services
                 cancellationToken: CancellationToken.None);
         }
 
+        // ── Private helpers ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Resolves a client code to a (code, name) tuple. An empty/null/whitespace input
+        /// returns (null, null) so the entity's client fields are cleared.
+        /// </summary>
+        private async Task<(string? code, string? name)> ResolveClientAsync(string? clientCode, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(clientCode)) return (null, null);
+            var trimmed = clientCode.Trim();
+            var client = await _clientRepository.GetByCodeAsync(trimmed, cancellationToken);
+            if (client == null)
+                throw new InvalidOperationException($"Client with code '{trimmed}' was not found.");
+            return (client.Code, client.Name);
+        }
+
         // ── Private mapper ──────────────────────────────────────────────────────────
 
-        private static RepositoryDto MapToDto(RepositoryMasterEntity e, string? projectName = null) => new RepositoryDto
+        private static RepositoryDto MapToDto(RepositoryMasterEntity e, string? projectName = null, string? projectClientName = null) => new RepositoryDto
         {
             Id = e.Id,
             RepositoryId = e.Id,
@@ -348,6 +419,9 @@ namespace OTA.API.Services
             GiteaUrl = e.GiteaUrl,
             ProjectId = e.ProjectId,
             ProjectName = projectName,
+            // Prefer the per-repo client tag when present; fall back to the project's primary client.
+            ClientCode = e.ClientCode,
+            ClientName = !string.IsNullOrWhiteSpace(e.ClientName) ? e.ClientName : projectClientName,
             DefaultBranch = e.DefaultBranch,
             IsActive = e.IsActive,
             WebhookConfigured = e.WebhookConfigured,

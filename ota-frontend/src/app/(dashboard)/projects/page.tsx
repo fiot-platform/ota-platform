@@ -15,6 +15,97 @@ import { useToast } from '@/components/ui/ToastProvider'
 import { Project, CreateProjectRequest, UpdateProjectRequest } from '@/types'
 import { formatDate } from '@/utils/formatters'
 
+// ─── Clients cell — single name row, or stacked initial avatars when multiple ─
+
+const AVATAR_COLORS = [
+  'bg-amber-400 text-amber-900',
+  'bg-emerald-400 text-emerald-900',
+  'bg-sky-500 text-white',
+  'bg-violet-400 text-violet-900',
+  'bg-rose-400 text-rose-900',
+  'bg-cyan-400 text-cyan-900',
+  'bg-orange-400 text-orange-900',
+  'bg-lime-400 text-lime-900',
+]
+
+function colorFor(seed: string): string {
+  // Stable hash → index. Same client → same color across the page.
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]
+}
+
+function ClientsCell({ project }: { project: Project }) {
+  const clients = project.clients ?? []
+
+  // Single (or no explicit clients list) — keep the original "name + code" layout
+  if (clients.length <= 1) {
+    return (
+      <div>
+        <p className="font-medium text-sm">{project.customerName}</p>
+        <p className="text-xs text-slate-400">{project.customerId}</p>
+      </div>
+    )
+  }
+
+  // Multiple — overlapping circles with the first letter of each client name.
+  // Cap to 3 visible; show "+N" on the last circle when there are more.
+  const visible = clients.slice(0, 3)
+  const overflow = Math.max(0, clients.length - visible.length)
+
+  return (
+    <div className="relative inline-flex items-center gap-2 group cursor-default">
+      <div className="flex -space-x-2">
+        {visible.map((c) => (
+          <span
+            key={c.code}
+            className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold ring-2 ring-white ${colorFor(c.code || c.name)}`}
+          >
+            {(c.name?.charAt(0) ?? '?').toUpperCase()}
+          </span>
+        ))}
+        {overflow > 0 && (
+          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold ring-2 ring-white bg-slate-200 text-slate-700">
+            +{overflow}
+          </span>
+        )}
+      </div>
+      <span className="text-xs text-slate-500 whitespace-nowrap">
+        {clients.length} clients
+      </span>
+
+      {/* Custom tooltip — appears above the avatars, lists every client */}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute left-0 bottom-full mb-2 z-20
+                   opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0
+                   transition-all duration-150 ease-out"
+      >
+        <div className="bg-white text-primary-900 text-xs rounded-lg shadow-lg ring-1 ring-slate-200 px-3 py-2 min-w-[160px] max-w-[260px]">
+          <p className="font-semibold text-[11px] uppercase tracking-wide text-slate-400 mb-1">
+            {clients.length} clients
+          </p>
+          <ul className="space-y-0.5">
+            {clients.map((c) => (
+              <li key={c.code} className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-semibold flex-shrink-0 ${colorFor(c.code || c.name)}`}
+                >
+                  {(c.name?.charAt(0) ?? '?').toUpperCase()}
+                </span>
+                <span className="truncate text-slate-700">{c.name}</span>
+                {c.code && <span className="text-slate-400 text-[10px]">{c.code}</span>}
+              </li>
+            ))}
+          </ul>
+          {/* Arrow pointing down at the avatar stack */}
+          <span className="absolute -bottom-1 left-4 w-2 h-2 bg-white ring-1 ring-slate-200 rotate-45 [clip-path:polygon(0_100%,100%_0,100%_100%)]" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ProjectsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -105,13 +196,8 @@ export default function ProjectsPage() {
     },
     {
       key: 'customerName',
-      header: 'Customer',
-      cell: (row) => (
-        <div>
-          <p className="font-medium text-sm">{row.customerName}</p>
-          <p className="text-xs text-slate-400">{row.customerId}</p>
-        </div>
-      ),
+      header: 'Clients',
+      cell: (row) => <ClientsCell project={row} />,
     },
     {
       key: 'businessUnit',
@@ -202,7 +288,7 @@ export default function ProjectsPage() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Projects"
-        subtitle="Manage your firmware projects and customer configurations"
+        subtitle="Manage your firmware projects and client configurations"
         breadcrumbs={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Projects' }]}
         actions={
           <RoleGuard module="Projects" action="create">

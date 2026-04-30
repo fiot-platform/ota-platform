@@ -313,6 +313,7 @@ namespace OTA.API.Models.DTOs
         public string Name { get; set; } = string.Empty;
         public string ProjectId { get; set; } = string.Empty;
         public string ProjectName { get; set; } = string.Empty;
+        public string? ClientName { get; set; }
         public int FirmwareCount { get; set; }
         public bool WebhookConfigured { get; set; }
         public DateTime? LastSyncedAt { get; set; }
@@ -332,9 +333,13 @@ namespace OTA.API.Models.DTOs
         public string Channel { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public long FileSizeBytes { get; set; }
-        public string? ApprovedByUserId { get; set; }
-        public string? ApprovedByName { get; set; }
+        public string? CreatedByName { get; set; }
         public DateTime CreatedAt { get; set; }
+        public string? QaVerifiedByName { get; set; }
+        public DateTime? QaVerifiedAt { get; set; }
+        public string? ApprovedByName { get; set; }
+        public DateTime? ApprovedAt { get; set; }
+        public int DeviceCount { get; set; }
     }
 
     /// <summary>One row in the Devices report table.</summary>
@@ -343,12 +348,16 @@ namespace OTA.API.Models.DTOs
         public string DeviceId { get; set; } = string.Empty;
         public string SerialNumber { get; set; } = string.Empty;
         public string? Name { get; set; }
+        public string? MacImeiIp { get; set; }
+        public string? CustomerName { get; set; }
+        public string Model { get; set; } = string.Empty;
         public string ProjectId { get; set; } = string.Empty;
         public string ProjectName { get; set; } = string.Empty;
         public string? CurrentFirmwareVersion { get; set; }
         public string Status { get; set; } = string.Empty;
         public DateTime? LastHeartbeatAt { get; set; }
         public DateTime RegisteredAt { get; set; }
+        public DateTime? LastOtaAt { get; set; }
     }
 
     /// <summary>One firmware row in the Project → Repository → Firmware tree report.</summary>
@@ -363,7 +372,15 @@ namespace OTA.API.Models.DTOs
         public string FirmwareVersion { get; set; } = string.Empty;
         public string Channel { get; set; } = string.Empty;
         public string FirmwareStatus { get; set; } = string.Empty;
+        public List<string> SupportedModels { get; set; } = new();
+        public long FileSizeBytes { get; set; }
+        public string? CreatedByName { get; set; }
         public DateTime FirmwareCreatedAt { get; set; }
+        public string? QaVerifiedByName { get; set; }
+        public DateTime? QaVerifiedAt { get; set; }
+        public string? ApprovedByName { get; set; }
+        public DateTime? ApprovedAt { get; set; }
+        public int DeviceCount { get; set; }
     }
 
     /// <summary>One OTA job row in the Device → OTA History tree report.</summary>
@@ -372,11 +389,31 @@ namespace OTA.API.Models.DTOs
         public string DeviceId { get; set; } = string.Empty;
         public string DeviceSerial { get; set; } = string.Empty;
         public string? DeviceName { get; set; }
+        public string? MacImeiIp { get; set; }
+        public string? CustomerName { get; set; }
+        public string Model { get; set; } = string.Empty;
         public string ProjectName { get; set; } = string.Empty;
+        public string? RepositoryName { get; set; }
+        /// <summary>The firmware version the device was running prior to this OTA job (null if unknown).</summary>
+        public string? OldFirmwareVersion { get; set; }
+        /// <summary>The firmware version targeted/installed by this OTA job.</summary>
         public string FirmwareVersion { get; set; } = string.Empty;
+        /// <summary>The device's *current* installed firmware version (snapshot at report time).</summary>
+        public string? CurrentFirmwareVersion { get; set; }
+        /// <summary>The version of any in-flight push (snapshot at report time, may be null).</summary>
+        public string? PendingFirmwareVersion { get; set; }
         public string JobStatus { get; set; } = string.Empty;
+        /// <summary>Live OTA progress status reported by the device via MQTT (snapshot).</summary>
+        public string? OtaStatus { get; set; }
+        public int OtaProgress { get; set; }
+        /// <summary>Device lifecycle status (Active / Suspended / Decommissioned).</summary>
+        public string DeviceStatus { get; set; } = string.Empty;
+        public DateTime? LastHeartbeatAt { get; set; }
         public DateTime? StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
+        /// <summary>UTC timestamp the OTA was pushed (job creation time).</summary>
+        public DateTime? PushedAt { get; set; }
+        public string? PushedByName { get; set; }
     }
 
     /// <summary>One day's row in the Daily OTA Progress stacked-bar report.</summary>

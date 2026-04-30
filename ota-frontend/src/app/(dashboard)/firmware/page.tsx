@@ -6,6 +6,7 @@ import { Search, RefreshCw, Eye, CheckCircle, Archive, Plus, Pencil, Trash2 } fr
 import Link from 'next/link'
 import { firmwareService } from '@/services/firmware.service'
 import { projectService } from '@/services/project.service'
+import { repositoryService } from '@/services/repository.service'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { DataTable, Column } from '@/components/ui/DataTable'
 import { StatusBadge } from '@/components/ui/Badge'
@@ -23,7 +24,10 @@ export default function FirmwarePage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const { role } = useAuth()
-  const canFilterByProject = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
+  const canFilterByProject =
+    role === UserRole.SuperAdmin ||
+    role === UserRole.PlatformAdmin ||
+    role === UserRole.ReleaseManager
   const canSeeAllStatuses = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
     || role === UserRole.ReleaseManager || role === UserRole.QA
 
@@ -35,6 +39,8 @@ export default function FirmwarePage() {
   )
   const [channelFilter, setChannelFilter] = React.useState('')
   const [projectFilter, setProjectFilter] = React.useState('')
+  const [repositoryFilter, setRepositoryFilter] = React.useState('')
+  const [versionFilter, setVersionFilter] = React.useState('')
   const [page, setPage] = React.useState(1)
   const [pageSize, setPageSize] = React.useState(25)
 
@@ -45,12 +51,13 @@ export default function FirmwarePage() {
   const [deleteTarget, setDeleteTarget] = React.useState<FirmwareVersion | null>(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['firmware', { search, status: statusFilter, channel: channelFilter, projectId: projectFilter, page, pageSize }],
+    queryKey: ['firmware', { search, status: statusFilter, channel: channelFilter, projectId: projectFilter, repositoryId: repositoryFilter, page, pageSize }],
     queryFn: () => firmwareService.getFirmwareList({
       search,
       status: (statusFilter as FirmwareStatus) || undefined,
       channel: (channelFilter as FirmwareChannel) || undefined,
       projectId: projectFilter || undefined,
+      repositoryId: repositoryFilter || undefined,
       page,
       pageSize,
     }),
@@ -60,6 +67,17 @@ export default function FirmwarePage() {
     queryKey: ['projects-all'],
     queryFn: () => projectService.getProjects({ pageSize: 200 }),
   })
+
+  const { data: repositories } = useQuery({
+    queryKey: ['repositories-filter', projectFilter],
+    queryFn: () => repositoryService.getRepositories({ projectId: projectFilter || undefined, pageSize: 200 }),
+    enabled: canFilterByProject,
+  })
+
+  const uniqueVersions = React.useMemo(
+    () => [...new Set((data?.items ?? []).map((f) => f.version))].sort(),
+    [data?.items],
+  )
 
   const createMutation = useMutation({
     mutationFn: (data: CreateFirmwareRequest) => firmwareService.createFirmware(data),
@@ -106,6 +124,23 @@ export default function FirmwarePage() {
     onError: () => toast({ title: 'Failed to deprecate firmware', variant: 'error' }),
   })
 
+  const handleProjectChange = (v: string) => {
+    setProjectFilter(v)
+    setRepositoryFilter('')
+    setVersionFilter('')
+    setPage(1)
+  }
+
+  const handleRepositoryChange = (v: string) => {
+    setRepositoryFilter(v)
+    setVersionFilter('')
+    setPage(1)
+  }
+
+  const displayItems = versionFilter
+    ? (data?.items ?? []).filter((f) => f.version === versionFilter)
+    : (data?.items ?? [])
+
   // Editable statuses (not yet approved/deprecated/rejected)
   const isEditable = (fw: FirmwareVersion) =>
     [FirmwareStatus.Draft, FirmwareStatus.PendingQA].includes(fw.status as FirmwareStatus)
@@ -115,22 +150,29 @@ export default function FirmwarePage() {
       key: 'version',
       header: 'Version',
       cell: (row) => (
-        <div>
-          <Link
-            href={`/firmware/${row.id}`}
-            className="font-mono font-bold text-accent-600 hover:text-accent-700 transition-colors text-sm"
-          >
-            {row.version}
-          </Link>
-          <p className="text-xs text-slate-500 mt-0.5">{row.repositoryName ?? row.repositoryId}</p>
-        </div>
+        <Link
+          href={`/firmware/${row.id}`}
+          className="font-mono font-bold text-accent-600 hover:text-accent-700 transition-colors text-sm"
+        >
+          {row.version}
+        </Link>
       ),
     },
     {
       key: 'project',
       header: 'Project',
       cell: (row) => (
-        <span className="text-sm text-primary-700">{row.projectName ?? '—'}</span>
+        <div>
+          <p className="text-sm text-primary-700">{row.projectName ?? '—'}</p>
+          <p className="text-xs text-slate-500">{row.clientName ?? '—'}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'repository',
+      header: 'Repository',
+      cell: (row) => (
+        <span className="text-sm text-slate-600">{row.repositoryName ?? row.repositoryId ?? '—'}</span>
       ),
     },
     {
@@ -321,7 +363,7 @@ export default function FirmwarePage() {
         {canFilterByProject && (
           <select
             value={projectFilter}
-            onChange={(e) => { setProjectFilter(e.target.value); setPage(1) }}
+            onChange={(e) => handleProjectChange(e.target.value)}
             className="input w-auto"
           >
             <option value="">All Projects</option>
@@ -330,6 +372,31 @@ export default function FirmwarePage() {
             ))}
           </select>
         )}
+
+        {canFilterByProject && (
+          <select
+            value={repositoryFilter}
+            onChange={(e) => handleRepositoryChange(e.target.value)}
+            className="input w-auto"
+          >
+            <option value="">All Repositories</option>
+            {(repositories?.items ?? []).map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        )}
+
+        <select
+          value={versionFilter}
+          onChange={(e) => { setVersionFilter(e.target.value) }}
+          className="input w-auto"
+          disabled={uniqueVersions.length === 0}
+        >
+          <option value="">All Versions</option>
+          {uniqueVersions.map((v) => (
+            <option key={v} value={v}>{v}</option>
+          ))}
+        </select>
 
         <button
           onClick={() => queryClient.invalidateQueries({ queryKey: ['firmware'] })}
@@ -343,7 +410,7 @@ export default function FirmwarePage() {
       {/* Table */}
       <DataTable
         columns={columns}
-        data={data?.items ?? []}
+        data={displayItems}
         pagination={data?.pagination}
         onPageChange={setPage}
         onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
@@ -369,6 +436,7 @@ export default function FirmwarePage() {
             fileSha256: values.fileSha256 || undefined,
             fileSizeBytes: values.fileSizeBytes || 0,
             isMandate: values.isMandate,
+            checkTrial: values.checkTrial,
             minRequiredVersion: values.minRequiredVersion || undefined,
             maxAllowedVersion: values.maxAllowedVersion || undefined,
             supportedModels: values.supportedModels ?? [],

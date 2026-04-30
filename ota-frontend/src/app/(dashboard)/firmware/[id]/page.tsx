@@ -8,7 +8,6 @@ import {
   CheckCircle,
   XCircle,
   FlaskConical,
-  Archive,
   Download,
   Calendar,
   Package,
@@ -20,6 +19,8 @@ import {
   FolderOpen,
   ShieldAlert,
   ArrowUpDown,
+  Copy,
+  Building2,
 } from 'lucide-react'
 import { firmwareService } from '@/services/firmware.service'
 import { getToken } from '@/lib/auth'
@@ -30,9 +31,11 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { ApproveFirmwareDialog } from '@/components/dialogs/ApproveFirmwareDialog'
 import { RejectFirmwareDialog } from '@/components/dialogs/RejectFirmwareDialog'
 import { QAVerifyDialog } from '@/components/dialogs/QAVerifyDialog'
+import { CopyFirmwareToClientsDialog } from '@/components/dialogs/CopyFirmwareToClientsDialog'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
+import { useAuth } from '@/hooks/useAuth'
 import { FirmwareStatus, QASessionStatus, UserRole } from '@/types'
-import { formatDate, formatFileSize, formatRelativeTime } from '@/utils/formatters'
+import { formatDate, formatFileSize } from '@/utils/formatters'
 
 function InfoItem({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   return (
@@ -96,9 +99,11 @@ export default function FirmwareDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
 
+  const { role } = useAuth()
   const [approveOpen, setApproveOpen] = React.useState(false)
   const [rejectOpen, setRejectOpen] = React.useState(false)
   const [qaOpen, setQaOpen] = React.useState(false)
+  const [copyOpen, setCopyOpen] = React.useState(false)
 
   const { data: firmware, isLoading } = useQuery({
     queryKey: ['firmware', id],
@@ -141,6 +146,11 @@ export default function FirmwareDetailPage() {
     [FirmwareStatus.Draft, FirmwareStatus.PendingQA].includes(firmware.status as FirmwareStatus) &&
     qaSession?.status === QASessionStatus.Complete
 
+  // "Copy to Other Clients" — only for Release Manager when firmware is Approved.
+  const canCopyToOtherClients =
+    role === UserRole.ReleaseManager &&
+    firmware.status === FirmwareStatus.Approved
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -182,6 +192,12 @@ export default function FirmwareDetailPage() {
                 </button>
               )}
             </RoleGuard>
+
+            {canCopyToOtherClients && (
+              <button onClick={() => setCopyOpen(true)} className="btn-primary">
+                <Copy className="w-4 h-4" /> Copy to Other Clients
+              </button>
+            )}
           </div>
         }
       />
@@ -199,7 +215,7 @@ export default function FirmwareDetailPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-x-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
               <div>
                 <InfoItem
                   icon={<Hash className="w-4 h-4" />}
@@ -210,6 +226,11 @@ export default function FirmwareDetailPage() {
                   icon={<FolderOpen className="w-4 h-4" />}
                   label="Project"
                   value={firmware.projectName ?? '—'}
+                />
+                <InfoItem
+                  icon={<Building2 className="w-4 h-4" />}
+                  label="Client"
+                  value={firmware.clientName ?? '—'}
                 />
                 <InfoItem
                   icon={<GitBranch className="w-4 h-4" />}
@@ -293,9 +314,9 @@ export default function FirmwareDetailPage() {
                   label="Download"
                   value={
                     firmware.downloadUrl ? (
-                      <div className="flex items-center gap-2">
-                        <code className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded font-mono tracking-widest select-none">
-                          ••••••••••••••••••••••••
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded font-mono select-none tracking-widest">
+                          ••••••••••••
                         </code>
                         <button
                           type="button"
@@ -413,7 +434,7 @@ export default function FirmwareDetailPage() {
                 <FlaskConical className="w-4 h-4 text-accent-600" />
                 QA Verification
               </h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Verified By</p>
                   <p className="font-medium">{firmware.qaVerifiedByName ?? (firmware.qaVerifiedBy ? 'Unknown User' : '—')}</p>
@@ -430,6 +451,7 @@ export default function FirmwareDetailPage() {
               )}
             </div>
           )}
+
         </div>
 
         {/* Approval Timeline */}
@@ -583,6 +605,11 @@ export default function FirmwareDetailPage() {
         onOpenChange={setQaOpen}
         firmwareId={id}
         firmwareVersion={firmware.version}
+      />
+      <CopyFirmwareToClientsDialog
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        firmware={firmware}
       />
     </div>
   )

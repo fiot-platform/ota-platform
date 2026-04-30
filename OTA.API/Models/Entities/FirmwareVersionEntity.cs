@@ -198,6 +198,34 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         public string? RejectionReason { get; set; }
 
+        // ── Trial OTA ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// When true the firmware must pass a Trial Device OTA before it can be
+        /// served through the regular check-update flow.
+        /// </summary>
+        [BsonElement("checkTrial")]
+        public bool CheckTrial { get; set; } = false;
+
+        /// <summary>
+        /// Flipped to true once a SuperAdmin or ReleaseManager marks the trial as
+        /// complete. While false and CheckTrial is true the firmware is invisible
+        /// to the check-update endpoint.
+        /// </summary>
+        [BsonElement("trialCompleted")]
+        public bool TrialCompleted { get; set; } = false;
+
+        /// <summary>UTC timestamp when the trial was completed.</summary>
+        [BsonElement("trialCompletedAt")]
+        [BsonIgnoreIfNull]
+        [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+        public DateTime? TrialCompletedAt { get; set; }
+
+        /// <summary>Remarks recorded by the tester when completing the trial.</summary>
+        [BsonElement("trialRemarks")]
+        [BsonIgnoreIfNull]
+        public string? TrialRemarks { get; set; }
+
         // ── Audit Fields ──────────────────────────────────────────────────────
 
         /// <summary>UTC timestamp when this firmware entry was first created (via webhook or manually).</summary>

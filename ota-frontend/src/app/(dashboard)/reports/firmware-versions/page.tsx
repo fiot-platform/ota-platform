@@ -68,7 +68,8 @@ export default function FirmwareVersionsReportPage() {
     const q = search.trim().toLowerCase()
     if (q) rows = rows.filter(
       (f) => f.version.toLowerCase().includes(q) || f.projectName.toLowerCase().includes(q) ||
-             f.repositoryName.toLowerCase().includes(q) || (f.approvedByName ?? '').toLowerCase().includes(q),
+             f.repositoryName.toLowerCase().includes(q) || (f.createdByName ?? '').toLowerCase().includes(q) ||
+             (f.qaVerifiedByName ?? '').toLowerCase().includes(q) || (f.approvedByName ?? '').toLowerCase().includes(q),
     )
     if (filters.status) rows = rows.filter((f) => f.status.toLowerCase() === filters.status.toLowerCase())
     if (filters.channel) rows = rows.filter((f) => f.channel.toLowerCase() === filters.channel.toLowerCase())
@@ -85,11 +86,32 @@ export default function FirmwareVersionsReportPage() {
   const columns: Column<FirmwareVersionReport>[] = [
     { key: 'version', header: 'Version', cell: (f) => <span className="font-mono font-semibold text-primary-800">{f.version}</span> },
     { key: 'projectName', header: 'Project', cell: (f) => <span className="text-slate-500">{f.projectName}</span> },
-    { key: 'repositoryName', header: 'Repository', cell: (f) => <span className="text-slate-500">{f.repositoryName}</span> },
+    { key: 'repositoryName', header: 'Repository Name', cell: (f) => <span className="text-slate-500">{f.repositoryName}</span> },
     { key: 'channel', header: 'Channel', cell: (f) => <ChannelBadge channel={f.channel} /> },
     { key: 'status', header: 'Status', cell: (f) => <FwBadge status={f.status} /> },
     { key: 'fileSizeBytes', header: 'Size', headerClassName: 'text-right', className: 'text-right', cell: (f) => <span className="text-slate-500">{f.fileSizeBytes ? formatFileSize(f.fileSizeBytes) : '—'}</span> },
-    { key: 'approvedByName', header: 'Approved By', cell: (f) => <span className="text-slate-500">{f.approvedByName ?? '—'}</span> },
+    {
+      key: 'createdByName',
+      header: 'Created By (Date)',
+      cell: (f) => f.createdByName
+        ? <><span className="text-slate-700">{f.createdByName}</span><br /><span className="text-xs text-slate-400">{formatDate(f.createdAt, 'dd MMM yyyy')}</span></>
+        : <span className="text-slate-400">— <span className="text-xs">({formatDate(f.createdAt, 'dd MMM yyyy')})</span></span>,
+    },
+    {
+      key: 'qaVerifiedByName',
+      header: 'QA Verify By (Date)',
+      cell: (f) => f.qaVerifiedByName
+        ? <><span className="text-slate-700">{f.qaVerifiedByName}</span><br /><span className="text-xs text-slate-400">{f.qaVerifiedAt ? formatDate(f.qaVerifiedAt, 'dd MMM yyyy') : '—'}</span></>
+        : <span className="text-slate-400">—</span>,
+    },
+    {
+      key: 'approvedByName',
+      header: 'Approved By (Date)',
+      cell: (f) => f.approvedByName
+        ? <><span className="text-slate-700">{f.approvedByName}</span><br /><span className="text-xs text-slate-400">{f.approvedAt ? formatDate(f.approvedAt, 'dd MMM yyyy') : '—'}</span></>
+        : <span className="text-slate-400">—</span>,
+    },
+    { key: 'deviceCount', header: 'Device Count', headerClassName: 'text-right', className: 'text-right', cell: (f) => <span className="font-semibold text-primary-800">{f.deviceCount}</span> },
     { key: 'createdAt', header: 'Created', cell: (f) => <span className="text-slate-500">{formatDate(f.createdAt, 'dd MMM yyyy')}</span> },
   ]
 
@@ -100,7 +122,7 @@ export default function FirmwareVersionsReportPage() {
         subtitle="All firmware versions across projects and repositories"
         breadcrumbs={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Reports', href: '/reports/firmware-trends' },
+          { label: 'Reports', href: '/reports/device-status' },
           { label: 'Firmware Versions' },
         ]}
       />

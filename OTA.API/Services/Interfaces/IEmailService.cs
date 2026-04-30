@@ -19,5 +19,8 @@ namespace OTA.API.Services.Interfaces
 
         /// <summary>Sends a welcome / account-created email to a new user.</summary>
         Task SendWelcomeEmailAsync(string toEmail, string userName, string temporaryPassword, CancellationToken cancellationToken = default);
+
+        /// <summary>Sends a generic CRUD activity notification to the performing user.</summary>
+        Task SendCrudNotificationAsync(string toEmail, string recipientName, string action, string entityType, string entityName, CancellationToken cancellationToken = default);
     }
 }

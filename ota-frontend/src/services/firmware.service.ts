@@ -8,6 +8,7 @@ import {
   RejectFirmwareRequest,
   QAVerifyRequest,
   AssignChannelRequest,
+  CopyFirmwareToRepositoriesResponse,
   ApiResponse,
   PaginatedResponse,
 } from '@/types'
@@ -75,6 +76,10 @@ export const firmwareService = {
     return response.data.data
   },
 
+  async completeTrial(id: string, remarks: string): Promise<void> {
+    await api.post(`/firmware/${id}/complete-trial`, { remarks })
+  },
+
   async uploadFirmwareFile(file: File): Promise<{
     fileName: string
     storedFileName: string
@@ -84,6 +89,9 @@ export const firmwareService = {
   }> {
     const formData = new FormData()
     formData.append('file', file)
+    // Setting Content-Type to undefined removes the axios instance default
+    // ('application/json') so the browser can set 'multipart/form-data; boundary=…'
+    // automatically — without the boundary the server returns 415.
     const response = await api.post<ApiResponse<{
       fileName: string
       storedFileName: string
@@ -91,7 +99,7 @@ export const firmwareService = {
       fileSha256: string
       downloadUrl: string
     }>>('/firmware/upload-file', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: { 'Content-Type': undefined },
     })
     return response.data.data
   },
@@ -103,6 +111,17 @@ export const firmwareService = {
   async syncFromGitea(repositoryId: string): Promise<{ synced: number; message: string }> {
     const response = await api.post<ApiResponse<{ synced: number; message: string }>>(
       `/firmware/sync/${repositoryId}`
+    )
+    return response.data.data
+  },
+
+  async copyToRepositories(
+    firmwareId: string,
+    targetRepositoryIds: string[],
+  ): Promise<CopyFirmwareToRepositoriesResponse> {
+    const response = await api.post<ApiResponse<CopyFirmwareToRepositoriesResponse>>(
+      `/firmware/${firmwareId}/copy-to-repositories`,
+      { targetRepositoryIds },
     )
     return response.data.data
   },

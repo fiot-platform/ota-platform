@@ -347,7 +347,7 @@ export default function UsersPage() {
               <div className="flex items-start gap-2.5 bg-accent-50 border border-accent-100 rounded-xl px-4 py-3">
                 <FolderKanban className="w-4 h-4 text-accent-500 mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-accent-700 leading-relaxed">
-                  Select projects this user can access. Leaving all unchecked grants access to <span className="font-semibold">all projects</span>.
+                  Select projects this user can access. <span className="font-semibold text-danger-600">No projects selected = no access to projects, devices or firmware</span> (SuperAdmin / PlatformAdmin are unrestricted).
                 </p>
               </div>
 
@@ -420,7 +420,7 @@ export default function UsersPage() {
                     : 'bg-slate-100 text-slate-500'
                 }`}>
                   {selectedProjectIds.length === 0
-                    ? 'No restriction (all projects)'
+                    ? 'No projects assigned (no access)'
                     : `${selectedProjectIds.length} project${selectedProjectIds.length !== 1 ? 's' : ''} selected`}
                 </span>
                 <div className="flex gap-2">

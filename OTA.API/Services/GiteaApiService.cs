@@ -292,6 +292,32 @@ namespace OTA.API.Services
                 owner, repo, filePath, (int)response.StatusCode, error);
         }
 
+        /// <inheritdoc/>
+        public async Task<bool> DeleteReleaseAsync(
+            string owner,
+            string repo,
+            long releaseId,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateOwnerRepo(owner, repo);
+
+            var url = $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/releases/{releaseId}";
+            using var response = await _httpClient.DeleteAsync(url, cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return false;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                throw new HttpRequestException(
+                    $"Gitea DeleteRelease failed for {owner}/{repo} release {releaseId}: HTTP {(int)response.StatusCode} — {error}");
+            }
+
+            _logger.LogDebug("Gitea release {ReleaseId} deleted from {Owner}/{Repo}.", releaseId, owner, repo);
+            return true;
+        }
+
         // ── Private helpers ─────────────────────────────────────────────────────────
 
         /// <summary>Wrapper for the Gitea user search response envelope.</summary>

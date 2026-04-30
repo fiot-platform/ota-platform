@@ -42,6 +42,10 @@ namespace OTA.API.Models.DTOs
         /// </summary>
         [MaxLength(200)]
         public string? PublishTopic { get; set; }
+
+        /// <summary>Optional repository to associate with this device.</summary>
+        [MaxLength(36)]
+        public string? RepositoryId { get; set; }
     }
 
     /// <summary>Request body for updating mutable device attributes.</summary>
@@ -88,14 +92,31 @@ namespace OTA.API.Models.DTOs
         [MaxLength(50)]
         public string CurrentVersion { get; set; } = string.Empty;
 
-        /// <summary>Device model identifier for compatibility matching.</summary>
-        [Required]
+        /// <summary>Device model identifier for compatibility matching. Optional — resolved from device record when omitted.</summary>
         [MaxLength(100)]
-        public string Model { get; set; } = string.Empty;
+        public string? Model { get; set; }
 
         /// <summary>Hardware revision identifier for compatibility matching.</summary>
         [MaxLength(50)]
         public string? HardwareRevision { get; set; }
+
+        /// <summary>Optional UTC timestamp provided by the device.</summary>
+        public DateTime? Timestamp { get; set; }
+
+        /// <summary>Optional IP address reported by the device.</summary>
+        [MaxLength(45)]
+        public string? IpAddress { get; set; }
+
+        /// <summary>Optional trigger reason (e.g. "power on", "scheduled").</summary>
+        [MaxLength(100)]
+        public string? Trigger { get; set; }
+    }
+
+    /// <summary>Envelope wrapper used by devices that send the check-update payload nested under "otaRequest".</summary>
+    public sealed class CheckUpdateEnvelope
+    {
+        [Required]
+        public CheckUpdateRequest OtaRequest { get; set; } = new();
     }
 
     /// <summary>Response body returned by the check-update endpoint.</summary>
@@ -175,6 +196,8 @@ namespace OTA.API.Models.DTOs
         public string CustomerName { get; set; } = string.Empty;
         public string? CurrentFirmwareVersion { get; set; }
         public string? PreviousFirmwareVersion { get; set; }
+        public string? RepositoryId { get; set; }
+        public string? RepositoryName { get; set; }
         public string Status { get; set; } = string.Empty;
         public DateTime? LastHeartbeatAt { get; set; }
         public DateTime RegisteredAt { get; set; }
@@ -198,6 +221,10 @@ namespace OTA.API.Models.DTOs
         public string? OtaTargetVersion { get; set; }
         /// <summary>UTC timestamp of the last OTA status packet.</summary>
         public DateTime? OtaUpdatedAt { get; set; }
+        /// <summary>True when the device has at least one OTA job in Queued or InProgress state.</summary>
+        public bool HasActiveOtaJob { get; set; }
+        /// <summary>The firmware version being pushed (stamped at push time, cleared on terminal status).</summary>
+        public string? PendingFirmwareVersion { get; set; }
     }
 
     /// <summary>Wrapper for paginated device list responses.</summary>
@@ -279,6 +306,34 @@ namespace OTA.API.Models.DTOs
         public DateTime? CompletedAt { get; set; }
         /// <summary>When this event was recorded (used for sorting and display).</summary>
         public DateTime Timestamp { get; set; }
+    }
+
+    /// <summary>Request body for acknowledging or rejecting a pending OTA job.</summary>
+    public sealed class AcknowledgeOtaJobRequest
+    {
+        /// <summary>The action to perform: "acknowledge" moves the job to Queued; "reject" cancels it.</summary>
+        [Required(ErrorMessage = "Action is required.")]
+        public string Action { get; set; } = string.Empty;
+
+        /// <summary>Optional notes from the approver or rejector.</summary>
+        [MaxLength(1000)]
+        public string? Notes { get; set; }
+    }
+
+    /// <summary>Summary of a single OTA job awaiting acknowledgement.</summary>
+    public sealed class PendingOtaAcknowledgementDto
+    {
+        /// <summary>MongoDB ObjectId of the OTA job document.</summary>
+        public string Id { get; set; } = string.Empty;
+        /// <summary>Platform-generated job GUID returned to the device.</summary>
+        public string JobId { get; set; } = string.Empty;
+        public string DeviceId { get; set; } = string.Empty;
+        public string DeviceSerialNumber { get; set; } = string.Empty;
+        public string FirmwareVersion { get; set; } = string.Empty;
+        public string FirmwareId { get; set; } = string.Empty;
+        /// <summary>"direct-push" or the parent rollout ID.</summary>
+        public string Source { get; set; } = string.Empty;
+        public DateTime CreatedAt { get; set; }
     }
 
     /// <summary>Lightweight device record returned by the public OTA-ready endpoint (no auth required).</summary>

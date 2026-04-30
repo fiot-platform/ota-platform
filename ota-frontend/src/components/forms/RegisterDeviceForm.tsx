@@ -8,13 +8,14 @@ import { useQuery } from '@tanstack/react-query'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, Loader2, ChevronDown } from 'lucide-react'
 import { projectService } from '@/services/project.service'
-import { Project } from '@/types'
+import { repositoryService } from '@/services/repository.service'
+import { Project, ProjectClientRef, Repository } from '@/types'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const registerDeviceSchema = z.object({
   projectName: z.string().min(1, 'Please select a project'),
-  customerCode: z.string().min(1, 'Customer code is required').max(200),
+  customerCode: z.string().min(1, 'Please select a client').max(200),
   macImeiIp: z
     .string()
     .min(1, 'MAC / IMEI / IP is required')
@@ -30,6 +31,7 @@ const registerDeviceSchema = z.object({
     .max(200)
     .optional()
     .or(z.literal('')),
+  repositoryId: z.string().optional(),
 })
 
 export type RegisterDeviceFormValues = z.infer<typeof registerDeviceSchema>
@@ -51,6 +53,10 @@ export function RegisterDeviceForm({
   onSubmit,
   isLoading = false,
 }: RegisterDeviceFormProps) {
+  const [selectedProjectId, setSelectedProjectId] = React.useState<string>('')
+  const [projectClients, setProjectClients] = React.useState<ProjectClientRef[]>([])
+  const [selectedClientCode, setSelectedClientCode] = React.useState<string>('')
+
   const {
     register,
     handleSubmit,
@@ -68,15 +74,17 @@ export function RegisterDeviceForm({
       model: '',
       currentFirmwareVersion: '',
       publishTopic: '',
+      repositoryId: '',
     },
   })
 
-  // Auto-generate publish topic from MAC/IMEI/IP
+  // Auto-generate publish topic from MAC/IMEI/IP.
+  // setValue is a stable ref from react-hook-form — omit it from deps to avoid loops.
   const macImeiIpValue = watch('macImeiIp')
   React.useEffect(() => {
     const serial = macImeiIpValue?.trim().toUpperCase()
     setValue('publishTopic', serial ? `OTA/${serial}/Status` : '')
-  }, [macImeiIpValue, setValue])
+  }, [macImeiIpValue]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch all active projects for the dropdown
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -87,8 +95,23 @@ export function RegisterDeviceForm({
 
   const projects: Project[] = projectsData?.items ?? []
 
+  // Fetch repositories once both project and client are selected
+  const { data: repositoriesData, isLoading: reposLoading } = useQuery({
+    queryKey: ['repositories-dropdown', selectedProjectId, selectedClientCode],
+    queryFn: () =>
+      repositoryService.getRepositories({ projectId: selectedProjectId, isActive: true, pageSize: 200 }),
+    enabled: open && !!selectedProjectId && !!selectedClientCode,
+  })
+
+  const repositories: Repository[] = repositoriesData?.items ?? []
+
   React.useEffect(() => {
-    if (!open) reset()
+    if (!open) {
+      reset()
+      setSelectedProjectId('')
+      setProjectClients([])
+      setSelectedClientCode('')
+    }
   }, [open, reset])
 
   return (
@@ -114,7 +137,7 @@ export function RegisterDeviceForm({
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
-              {/* Project Name — dropdown */}
+              {/* Project Name */}
               <div>
                 <label className="label">
                   Project Name <span className="text-danger-500">*</span>
@@ -129,11 +152,13 @@ export function RegisterDeviceForm({
                         disabled={projectsLoading}
                         className={`input appearance-none pr-9 ${errors.projectName ? 'border-danger-400' : ''}`}
                         onChange={(e) => {
-                          // 1. Update projectName in RHF state
                           field.onChange(e)
-                          // 2. Auto-fill customerCode from the selected project
                           const matched = projects.find((p) => p.name === e.target.value)
-                          setValue('customerCode', matched ? matched.customerId : '', { shouldValidate: true })
+                          setValue('customerCode', '', { shouldValidate: false })
+                          setValue('repositoryId', '')
+                          setProjectClients(matched?.clients ?? [])
+                          setSelectedProjectId(matched?.id ?? '')
+                          setSelectedClientCode('')
                         }}
                       >
                         <option value="" disabled>
@@ -159,24 +184,89 @@ export function RegisterDeviceForm({
                 )}
               </div>
 
-              {/* Customer Code — auto-filled, still editable */}
+              {/* Client — derived from selected project */}
               <div>
                 <label className="label">
-                  Customer Code <span className="text-danger-500">*</span>
+                  Client <span className="text-danger-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="Auto-filled from project"
-                  className={`input ${errors.customerCode ? 'border-danger-400' : ''}`}
-                  {...register('customerCode')}
-                />
-                {errors.customerCode ? (
+                <div className="relative">
+                  <Controller
+                    name="customerCode"
+                    control={control}
+                    render={({ field }) => (
+                      <select
+                        {...field}
+                        disabled={!selectedProjectId}
+                        className={`input appearance-none pr-9 ${errors.customerCode ? 'border-danger-400' : ''}`}
+                        onChange={(e) => {
+                          field.onChange(e)
+                          setValue('repositoryId', '')
+                          setSelectedClientCode(e.target.value)
+                        }}
+                      >
+                        <option value="">
+                          {!selectedProjectId
+                            ? 'Select a project first'
+                            : projectClients.length === 0
+                            ? 'No clients assigned to this project'
+                            : 'Select a client'}
+                        </option>
+                        {projectClients.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name} — {c.code}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                    <ChevronDown className="w-4 h-4" />
+                  </span>
+                </div>
+                {errors.customerCode && (
                   <p className="form-error">{errors.customerCode.message}</p>
-                ) : (
-                  <p className="text-xs text-slate-400 mt-1">
-                    Filled automatically from the selected project. You can override it.
-                  </p>
                 )}
+              </div>
+
+              {/* Repository — loaded after both project and client are selected */}
+              <div>
+                <label className="label">Repository</label>
+                <div className="relative">
+                  <Controller
+                    name="repositoryId"
+                    control={control}
+                    render={({ field }) => (
+                      <select
+                        {...field}
+                        disabled={!selectedProjectId || !selectedClientCode || reposLoading}
+                        className="input appearance-none pr-9"
+                      >
+                        <option value="">
+                          {!selectedProjectId
+                            ? 'Select a project first'
+                            : !selectedClientCode
+                            ? 'Select a client first'
+                            : reposLoading
+                            ? 'Loading repositories…'
+                            : repositories.length === 0
+                            ? 'No repositories found'
+                            : 'Select a repository (optional)'}
+                        </option>
+                        {repositories.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                    {reposLoading && selectedProjectId && selectedClientCode
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <ChevronDown className="w-4 h-4" />
+                    }
+                  </span>
+                </div>
               </div>
 
               {/* MAC / IMEI / IP */}

@@ -8,7 +8,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { DataTable, Column } from '@/components/ui/DataTable'
 import { FilterPopover, ActiveFilterChips, FilterValues, FilterField } from '@/components/ui/FilterPopover'
 import { useToast } from '@/components/ui/ToastProvider'
-import { downloadBlob, formatDate } from '@/utils/formatters'
+import { downloadBlob, formatDate, formatFileSize } from '@/utils/formatters'
 import { FwBadge, ChannelBadge, ReportHeader } from '@/components/reports/shared'
 
 type RepoFwRow = Awaited<ReturnType<typeof reportService.getProjectRepoFirmwareReport>>[number]
@@ -98,11 +98,27 @@ export default function ProjectRepoFirmwarePage() {
     }
   }
 
+  const renderUserDate = (name: string | null | undefined, when: string | null | undefined) => {
+    if (!name && !when) return <span className="text-slate-300">—</span>
+    return (
+      <div className="leading-tight">
+        <p className="text-sm text-slate-700">{name ?? '—'}</p>
+        {when && <p className="text-xs text-slate-400">{formatDate(when, 'dd MMM yyyy')}</p>}
+      </div>
+    )
+  }
+
   const fwColumns: Column<RepoFwRow>[] = [
-    { key: 'firmwareVersion', header: 'Version', cell: (f) => <span className="font-mono">{f.firmwareVersion}</span> },
-    { key: 'channel', header: 'Channel', cell: (f) => <ChannelBadge channel={f.channel} /> },
-    { key: 'firmwareStatus', header: 'Status', cell: (f) => <FwBadge status={f.firmwareStatus} /> },
-    { key: 'firmwareCreatedAt', header: 'Created', cell: (f) => <span className="text-slate-500">{formatDate(f.firmwareCreatedAt, 'dd MMM yyyy')}</span> },
+    { key: 'firmwareVersion',   header: 'Version',             cell: (f) => <span className="font-mono">{f.firmwareVersion}</span> },
+    { key: 'channel',           header: 'Channel',             cell: (f) => <ChannelBadge channel={f.channel} /> },
+    { key: 'firmwareStatus',    header: 'Status',              cell: (f) => <FwBadge status={f.firmwareStatus} /> },
+    { key: 'supportedModels',   header: 'Model',               cell: (f) => <span className="text-slate-600 text-sm">{f.supportedModels?.length ? f.supportedModels.join(', ') : '—'}</span> },
+    { key: 'fileSizeBytes',     header: 'Size',                cell: (f) => <span className="text-slate-600 text-xs">{formatFileSize(f.fileSizeBytes ?? 0)}</span> },
+    { key: 'createdBy',         header: 'Created By (Date)',   cell: (f) => renderUserDate(f.createdByName, f.firmwareCreatedAt) },
+    { key: 'qaVerifiedBy',      header: 'QA Verify By (Date)', cell: (f) => renderUserDate(f.qaVerifiedByName, f.qaVerifiedAt) },
+    { key: 'approvedBy',        header: 'Approved By (Date)',  cell: (f) => renderUserDate(f.approvedByName, f.approvedAt) },
+    { key: 'deviceCount',       header: 'Device Count',        cell: (f) => <span className="text-slate-700 font-semibold">{f.deviceCount ?? 0}</span> },
+    { key: 'firmwareCreatedAt', header: 'Created',             cell: (f) => <span className="text-slate-500">{formatDate(f.firmwareCreatedAt, 'dd MMM yyyy')}</span> },
   ]
 
   return (
@@ -112,7 +128,7 @@ export default function ProjectRepoFirmwarePage() {
         subtitle="Each project's repositories and their associated firmware versions"
         breadcrumbs={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Reports', href: '/reports/firmware-trends' },
+          { label: 'Reports', href: '/reports/device-status' },
           { label: 'Project Repos & Firmware' },
         ]}
       />

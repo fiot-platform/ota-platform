@@ -101,6 +101,16 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         public string? ProjectName { get; set; }
 
+        /// <summary>Optional repository this device is associated with.</summary>
+        [BsonElement("repositoryId")]
+        [BsonIgnoreIfNull]
+        public string? RepositoryId { get; set; }
+
+        /// <summary>Display name of the associated repository (denormalised for read performance).</summary>
+        [BsonElement("repositoryName")]
+        [BsonIgnoreIfNull]
+        public string? RepositoryName { get; set; }
+
         /// <summary>Current operational status of the device.</summary>
         [BsonElement("status")]
         [BsonRepresentation(BsonType.String)]
@@ -148,6 +158,23 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
         public DateTime? OtaUpdatedAt { get; set; }
+
+        /// <summary>
+        /// Denormalised flag set when the device has at least one OTA job in
+        /// Queued or InProgress state. Cleared on terminal status (Succeeded,
+        /// Failed, Cancelled, rolled back). Indexed for fast Pending-tab filtering.
+        /// </summary>
+        [BsonElement("hasActiveOtaJob")]
+        public bool HasActiveOtaJob { get; set; }
+
+        /// <summary>
+        /// Denormalised firmware version that the active OTA job (Queued or
+        /// InProgress) is pushing to this device. Null when no job is active.
+        /// Used by the Pending OTA tab's "New FW" column.
+        /// </summary>
+        [BsonElement("pendingFirmwareVersion")]
+        [BsonIgnoreIfNull]
+        public string? PendingFirmwareVersion { get; set; }
 
         /// <summary>UserId of the platform user who registered this device.</summary>
         [BsonElement("registeredByUserId")]

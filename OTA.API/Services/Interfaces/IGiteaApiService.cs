@@ -112,5 +112,16 @@ namespace OTA.API.Services.Interfaces
             byte[] content,
             string branch = "main",
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Deletes a Gitea release by its internal release ID.
+        /// Returns true if deleted, false if the release did not exist (404).
+        /// Throws <see cref="HttpRequestException"/> on other API errors.
+        /// </summary>
+        Task<bool> DeleteReleaseAsync(
+            string owner,
+            string repo,
+            long releaseId,
+            CancellationToken cancellationToken = default);
     }
 }

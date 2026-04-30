@@ -68,4 +68,7 @@ namespace OTA.API.Models.DTOs
 
     /// <summary>Alias for <see cref="RepositoryDetailDto"/> used by IRepositoryService.</summary>
     public class RepositoryDto : RepositoryDetailDto { }
+
+    /// <summary>Alias for <see cref="ClientDetailDto"/> used by IClientService.</summary>
+    public class ClientDto : ClientDetailDto { }
 }

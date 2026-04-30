@@ -99,7 +99,7 @@ export default function UsersReportPage() {
         subtitle="All platform users with role and account status"
         breadcrumbs={[
           { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Reports', href: '/reports/firmware-trends' },
+          { label: 'Reports', href: '/reports/device-status' },
           { label: 'Users' },
         ]}
       />

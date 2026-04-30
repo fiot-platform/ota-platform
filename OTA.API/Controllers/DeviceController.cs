@@ -20,13 +20,15 @@ namespace OTA.API.Controllers
     {
         private readonly IDeviceService _deviceService;
         private readonly IUserService _userService;
+        private readonly IProjectService _projectService;
         private readonly ILogger<DeviceController> _logger;
 
-        public DeviceController(IDeviceService deviceService, IUserService userService, ILogger<DeviceController> logger)
+        public DeviceController(IDeviceService deviceService, IUserService userService, IProjectService projectService, ILogger<DeviceController> logger)
         {
-            _deviceService = deviceService ?? throw new ArgumentNullException(nameof(deviceService));
-            _userService   = userService ?? throw new ArgumentNullException(nameof(userService));
-            _logger        = logger ?? throw new ArgumentNullException(nameof(logger));
+            _deviceService  = deviceService  ?? throw new ArgumentNullException(nameof(deviceService));
+            _userService    = userService    ?? throw new ArgumentNullException(nameof(userService));
+            _projectService = projectService ?? throw new ArgumentNullException(nameof(projectService));
+            _logger         = logger         ?? throw new ArgumentNullException(nameof(logger));
         }
 
         private string CurrentUserId =>
@@ -63,7 +65,21 @@ namespace OTA.API.Controllers
             CancellationToken cancellationToken = default)
         {
             var allowedProjectIds = await GetProjectScopeAsync(cancellationToken);
-            var result = await _deviceService.GetDevicesAsync(search ?? string.Empty, page, pageSize, projectId, allowedProjectIds, cancellationToken);
+
+            // Devices store ProjectName (not ProjectId). Resolve the incoming projectId
+            // (MongoDB ObjectId) to the project's name so the repository filter matches.
+            string? resolvedProjectFilter = projectId;
+            if (!string.IsNullOrWhiteSpace(projectId))
+            {
+                try
+                {
+                    var project = await _projectService.GetProjectByIdAsync(projectId, cancellationToken);
+                    if (project != null) resolvedProjectFilter = project.Name;
+                }
+                catch { /* fall back to the raw value */ }
+            }
+
+            var result = await _deviceService.GetDevicesAsync(search ?? string.Empty, page, pageSize, resolvedProjectFilter, allowedProjectIds, cancellationToken);
             var pagination = PaginationInfo.Create(page, pageSize, result.TotalCount);
             return Ok(ApiResponse<List<DeviceDto>>.Ok(result.Items, "Devices retrieved successfully.", pagination));
         }
@@ -71,13 +87,33 @@ namespace OTA.API.Controllers
         private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
         {
             var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+
+            // Only SuperAdmin and PlatformAdmin see everything
             if (role is "SuperAdmin" or "PlatformAdmin") return null;
 
             var userId = CurrentUserId;
             if (string.IsNullOrWhiteSpace(userId)) return new List<string>();
 
             var user = await _userService.GetUserByIdAsync(userId, cancellationToken);
-            return user?.ProjectScope ?? new List<string>();
+            var scopeIds = user?.ProjectScope ?? new List<string>();
+
+            // All other roles: no assigned projects = see nothing
+            if (scopeIds.Count == 0) return new List<string>();
+
+            // Devices store ProjectName (not ProjectId). Return both IDs and names
+            // so the repository OR-filter can match on either field.
+            var combined = new List<string>(scopeIds);
+            try
+            {
+                var projects = await _projectService.GetProjectsAsync(string.Empty, 1, 500, scopeIds, cancellationToken);
+                combined.AddRange(projects.Items.Select(p => p.Name).Where(n => !string.IsNullOrWhiteSpace(n)));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not resolve project names for scope — falling back to IDs only.");
+            }
+
+            return combined.Distinct().ToList();
         }
 
         /// <summary>Returns a single device by its identifier. Requires CanViewDevices.</summary>
@@ -167,14 +203,26 @@ namespace OTA.API.Controllers
         [ProducesResponseType(typeof(ApiResponse<CheckUpdateResponse>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> CheckForUpdate(
-            [FromBody] CheckUpdateRequest request,
+            [FromBody] System.Text.Json.JsonElement body,
             CancellationToken cancellationToken = default)
         {
-            if (!ModelState.IsValid)
+            // Accept both flat { "deviceId": ... } and wrapped { "otaRequest": { "deviceId": ... } } payloads.
+            CheckUpdateRequest? request = null;
+            if (body.TryGetProperty("otaRequest", out var inner))
             {
-                var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).ToList();
-                return BadRequest(ApiResponse<CheckUpdateResponse>.Fail("Validation failed.", errors));
+                request = System.Text.Json.JsonSerializer.Deserialize<CheckUpdateRequest>(
+                    inner.GetRawText(),
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
+            else
+            {
+                request = System.Text.Json.JsonSerializer.Deserialize<CheckUpdateRequest>(
+                    body.GetRawText(),
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+
+            if (request == null || string.IsNullOrWhiteSpace(request.DeviceId) || string.IsNullOrWhiteSpace(request.CurrentVersion))
+                return BadRequest(ApiResponse<CheckUpdateResponse>.Fail("deviceId and currentVersion are required."));
 
             var response = await _deviceService.CheckForUpdateAsync(request, cancellationToken);
             return Ok(ApiResponse<CheckUpdateResponse>.Ok(response, response.HasUpdate ? "Update available." : "Device is up to date."));
@@ -275,10 +323,10 @@ namespace OTA.API.Controllers
         /// <summary>
         /// Pushes a specific firmware version to a device by creating a direct OTA job.
         /// The device will receive this firmware on its next check-update request.
-        /// Requires CanManageDevices.
+        /// Requires CanPushFirmware.
         /// </summary>
         [HttpPost("{id}/push-firmware")]
-        [Authorize(Policy = "CanManageDevices")]
+        [Authorize(Policy = "CanPushFirmware")]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
@@ -318,6 +366,19 @@ namespace OTA.API.Controllers
         {
             await _deviceService.DecommissionDeviceAsync(id, CurrentUserId, CurrentEmail, ClientIp, cancellationToken);
             return Ok(ApiResponse.OkNoData("Device decommissioned successfully."));
+        }
+
+        /// <summary>
+        /// Recomputes the denormalised <c>HasActiveOtaJob</c> flag on every device by
+        /// inspecting the ota_jobs collection. SuperAdmin only.
+        /// </summary>
+        [HttpPost("backfill-active-ota-flag")]
+        [Authorize(Roles = "SuperAdmin")]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> BackfillActiveOtaFlag(CancellationToken cancellationToken = default)
+        {
+            var updated = await _deviceService.BackfillActiveOtaJobFlagAsync(cancellationToken);
+            return Ok(ApiResponse<object>.Ok(new { updatedCount = updated }, $"{updated} device(s) marked active."));
         }
     }
 }

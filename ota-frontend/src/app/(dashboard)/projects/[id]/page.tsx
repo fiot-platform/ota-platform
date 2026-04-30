@@ -23,7 +23,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { RepositoryForm, RegisterRepositoryPayload } from '@/components/forms/RepositoryForm'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { useToast } from '@/components/ui/ToastProvider'
-import { Repository } from '@/types'
+import { ProjectClientRef, Repository } from '@/types'
 import { formatDate, formatRelativeTime } from '@/utils/formatters'
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
@@ -33,6 +33,103 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
         <div className="text-sm text-primary-800 font-medium">{value}</div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Client avatar stack with hover tooltip ──────────────────────────────────
+
+const AVATAR_COLORS = [
+  'bg-amber-400 text-amber-900',
+  'bg-emerald-400 text-emerald-900',
+  'bg-sky-500 text-white',
+  'bg-violet-400 text-violet-900',
+  'bg-rose-400 text-rose-900',
+  'bg-cyan-400 text-cyan-900',
+  'bg-orange-400 text-orange-900',
+  'bg-lime-400 text-lime-900',
+]
+
+function colorFor(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]
+}
+
+function ClientsValue({
+  clients,
+  fallbackName,
+  fallbackCode,
+}: {
+  clients?: ProjectClientRef[]
+  fallbackName?: string
+  fallbackCode?: string
+}) {
+  const list = clients ?? []
+
+  // Single (or empty) — keep the original "name + code" layout
+  if (list.length <= 1) {
+    const name = list[0]?.name ?? fallbackName ?? '—'
+    const code = list[0]?.code ?? fallbackCode
+    return (
+      <div>
+        <p>{name}</p>
+        {code && <p className="text-xs text-slate-400 font-mono">{code}</p>}
+      </div>
+    )
+  }
+
+  const visible = list.slice(0, 3)
+  const overflow = Math.max(0, list.length - visible.length)
+
+  return (
+    <div className="relative inline-flex items-center gap-2 group cursor-default">
+      <div className="flex -space-x-2">
+        {visible.map((c) => (
+          <span
+            key={c.code}
+            className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold ring-2 ring-white ${colorFor(c.code || c.name)}`}
+          >
+            {(c.name?.charAt(0) ?? '?').toUpperCase()}
+          </span>
+        ))}
+        {overflow > 0 && (
+          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold ring-2 ring-white bg-slate-200 text-slate-700">
+            +{overflow}
+          </span>
+        )}
+      </div>
+      <span className="text-xs text-slate-500 whitespace-nowrap">
+        {list.length} clients
+      </span>
+
+      {/* Tooltip — appears above the avatars on hover, white background */}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute left-0 bottom-full mb-2 z-20
+                   opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0
+                   transition-all duration-150 ease-out"
+      >
+        <div className="bg-white text-primary-900 text-xs rounded-lg shadow-lg ring-1 ring-slate-200 px-3 py-2 min-w-[160px] max-w-[260px]">
+          <p className="font-semibold text-[11px] uppercase tracking-wide text-slate-400 mb-1">
+            {list.length} clients
+          </p>
+          <ul className="space-y-0.5">
+            {list.map((c) => (
+              <li key={c.code} className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-semibold flex-shrink-0 ${colorFor(c.code || c.name)}`}
+                >
+                  {(c.name?.charAt(0) ?? '?').toUpperCase()}
+                </span>
+                <span className="truncate text-slate-700">{c.name}</span>
+                {c.code && <span className="text-slate-400 text-[10px]">{c.code}</span>}
+              </li>
+            ))}
+          </ul>
+          <span className="absolute -bottom-1 left-4 w-2 h-2 bg-white ring-1 ring-slate-200 rotate-45 [clip-path:polygon(0_100%,100%_0,100%_100%)]" />
+        </div>
       </div>
     </div>
   )
@@ -169,12 +266,13 @@ export default function ProjectDetailPage() {
 
             <InfoRow
               icon={<Building className="w-4 h-4" />}
-              label="Customer"
+              label="Clients"
               value={
-                <div>
-                  <p>{project.customerName}</p>
-                  <p className="text-xs text-slate-400 font-mono">{project.customerId}</p>
-                </div>
+                <ClientsValue
+                  clients={project.clients}
+                  fallbackName={project.customerName}
+                  fallbackCode={project.customerId}
+                />
               }
             />
 

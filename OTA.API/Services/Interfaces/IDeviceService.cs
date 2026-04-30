@@ -135,5 +135,12 @@ namespace OTA.API.Services.Interfaces
         /// Intended for public/device-facing consumption.
         /// </summary>
         Task<List<OtaReadyDeviceDto>> GetOtaReadyDevicesAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Recomputes the denormalised <c>HasActiveOtaJob</c> flag on every device by
+        /// inspecting the ota_jobs collection. Returns the number of devices updated.
+        /// SuperAdmin only.
+        /// </summary>
+        Task<long> BackfillActiveOtaJobFlagAsync(CancellationToken cancellationToken = default);
     }
 }

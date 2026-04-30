@@ -44,6 +44,9 @@ namespace OTA.API.Models.Settings
 
         /// <summary>Collection storing rollout policy definitions.</summary>
         public string RolloutPoliciesCollection { get; set; } = "rollout_policies";
+
+        /// <summary>Collection storing client (customer organisation) records.</summary>
+        public string ClientsCollection { get; set; } = "clients";
     }
 
     /// <summary>

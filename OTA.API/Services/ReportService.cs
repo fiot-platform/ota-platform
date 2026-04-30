@@ -25,6 +25,7 @@ namespace OTA.API.Services
         private readonly IProjectRepository _projectRepository;
         private readonly IUserRepository _userRepository;
         private readonly IRepositoryMasterRepository _repositoryRepository;
+        private readonly IClientRepository _clientRepository;
         private readonly ILogger<ReportService> _logger;
 
         /// <summary>Initialises a new instance of <see cref="ReportService"/>.</summary>
@@ -36,6 +37,7 @@ namespace OTA.API.Services
             IProjectRepository projectRepository,
             IUserRepository userRepository,
             IRepositoryMasterRepository repositoryRepository,
+            IClientRepository clientRepository,
             ILogger<ReportService> logger)
         {
             _deviceRepository = deviceRepository ?? throw new ArgumentNullException(nameof(deviceRepository));
@@ -45,6 +47,7 @@ namespace OTA.API.Services
             _projectRepository = projectRepository ?? throw new ArgumentNullException(nameof(projectRepository));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _repositoryRepository = repositoryRepository ?? throw new ArgumentNullException(nameof(repositoryRepository));
+            _clientRepository = clientRepository ?? throw new ArgumentNullException(nameof(clientRepository));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -356,22 +359,27 @@ namespace OTA.API.Services
                 var projects = await _projectRepository.GetAllAsync(cancellationToken);
                 var allFirmware = await _firmwareRepository.GetAllAsync(cancellationToken);
 
-                var projectMap = projects.ToDictionary(p => p.ProjectId, p => p.Name);
+                var projectEntityMap = projects.ToDictionary(p => p.ProjectId, p => p);
                 var firmwareCountByRepo = allFirmware
                     .GroupBy(f => f.RepositoryId)
                     .ToDictionary(g => g.Key, g => g.Count());
 
-                return repos.Select(r => new RepositoryReportDto
+                return repos.Select(r =>
                 {
-                    RepositoryId      = r.RepositoryId,
-                    Name              = r.GiteaRepoName,
-                    ProjectId         = r.ProjectId,
-                    ProjectName       = projectMap.GetValueOrDefault(r.ProjectId, r.ProjectId),
-                    FirmwareCount     = firmwareCountByRepo.GetValueOrDefault(r.RepositoryId),
-                    WebhookConfigured = r.WebhookConfigured,
-                    LastSyncedAt      = r.LastSyncedAt,
-                    IsActive          = r.IsActive,
-                    CreatedAt         = r.CreatedAt
+                    var project = projectEntityMap.GetValueOrDefault(r.ProjectId);
+                    return new RepositoryReportDto
+                    {
+                        RepositoryId      = r.RepositoryId,
+                        Name              = r.GiteaRepoName,
+                        ProjectId         = r.ProjectId,
+                        ProjectName       = project?.Name ?? r.ProjectId,
+                        ClientName        = project?.CustomerName,
+                        FirmwareCount     = firmwareCountByRepo.GetValueOrDefault(r.RepositoryId),
+                        WebhookConfigured = r.WebhookConfigured,
+                        LastSyncedAt      = r.LastSyncedAt,
+                        IsActive          = r.IsActive,
+                        CreatedAt         = r.CreatedAt
+                    };
                 }).OrderBy(r => r.Name).ToList();
             }
             catch (Exception ex)
@@ -390,27 +398,45 @@ namespace OTA.API.Services
                 var projects = await _projectRepository.GetAllAsync(cancellationToken);
                 var repos    = await _repositoryRepository.GetAllAsync(cancellationToken);
                 var users    = await _userRepository.GetAllAsync(cancellationToken);
+                var devices  = await _deviceRepository.GetAllAsync(cancellationToken);
 
                 var projectMap = projects.ToDictionary(p => p.ProjectId, p => p.Name);
-                var repoMap    = repos.ToDictionary(r => r.RepositoryId, r => r.GiteaRepoName);
+                // firmware.RepositoryId can hold either the platform RepositoryId or the
+                // MongoDB _id (legacy data). Index by both so the name lookup succeeds.
+                var repoMap    = new Dictionary<string, string>();
+                foreach (var r in repos)
+                {
+                    if (!string.IsNullOrWhiteSpace(r.RepositoryId)) repoMap[r.RepositoryId] = r.GiteaRepoName;
+                    if (!string.IsNullOrWhiteSpace(r.Id))           repoMap[r.Id]           = r.GiteaRepoName;
+                }
                 var userMap    = users.ToDictionary(u => u.UserId, u => u.Name);
+
+                // Count devices per firmware version string, grouped by version
+                var deviceCountByVersion = devices
+                    .Where(d => d.CurrentFirmwareVersion != null)
+                    .GroupBy(d => d.CurrentFirmwareVersion!)
+                    .ToDictionary(g => g.Key, g => g.Count());
 
                 return firmware.Select(f => new FirmwareVersionReportDto
                 {
-                    FirmwareId        = f.FirmwareId,
-                    Version           = f.Version,
-                    ProjectId         = f.ProjectId,
-                    ProjectName       = projectMap.GetValueOrDefault(f.ProjectId, f.ProjectId),
-                    RepositoryId      = f.RepositoryId,
-                    RepositoryName    = repoMap.GetValueOrDefault(f.RepositoryId, f.RepositoryId),
-                    Channel           = f.Channel.ToString(),
-                    Status            = f.Status.ToString(),
-                    FileSizeBytes     = f.FileSizeBytes,
-                    ApprovedByUserId  = f.ApprovedByUserId,
-                    ApprovedByName    = f.ApprovedByUserId != null
-                                        ? userMap.GetValueOrDefault(f.ApprovedByUserId)
-                                        : null,
-                    CreatedAt         = f.CreatedAt
+                    FirmwareId       = f.FirmwareId,
+                    Version          = f.Version,
+                    ProjectId        = f.ProjectId,
+                    ProjectName      = projectMap.GetValueOrDefault(f.ProjectId, f.ProjectId),
+                    RepositoryId     = f.RepositoryId,
+                    RepositoryName   = repoMap.GetValueOrDefault(f.RepositoryId, f.RepositoryId),
+                    Channel          = f.Channel.ToString(),
+                    Status           = f.Status.ToString(),
+                    FileSizeBytes    = f.FileSizeBytes,
+                    CreatedByName    = !string.IsNullOrWhiteSpace(f.CreatedByName)
+                                        ? f.CreatedByName
+                                        : (f.CreatedByUserId != null ? userMap.GetValueOrDefault(f.CreatedByUserId) : null),
+                    CreatedAt        = f.CreatedAt,
+                    QaVerifiedByName = f.QaVerifiedByUserId != null ? userMap.GetValueOrDefault(f.QaVerifiedByUserId) : null,
+                    QaVerifiedAt     = f.QaVerifiedAt,
+                    ApprovedByName   = f.ApprovedByUserId != null ? userMap.GetValueOrDefault(f.ApprovedByUserId) : null,
+                    ApprovedAt       = f.ApprovedAt,
+                    DeviceCount      = deviceCountByVersion.GetValueOrDefault(f.Version),
                 }).OrderByDescending(f => f.CreatedAt).ToList();
             }
             catch (Exception ex)
@@ -426,17 +452,26 @@ namespace OTA.API.Services
             try
             {
                 var devices = await _deviceRepository.GetAllAsync(cancellationToken);
+                var clients = await _clientRepository.GetAllAsync(cancellationToken);
+                var clientNameByCode = clients.ToDictionary(c => c.Code, c => c.Name, StringComparer.OrdinalIgnoreCase);
+
                 return devices.Select(d => new DeviceReportDto
                 {
                     DeviceId               = d.DeviceId,
                     SerialNumber           = d.SerialNumber,
                     Name                   = d.SiteName,
+                    MacImeiIp              = d.MacImeiIp ?? d.SerialNumber,
+                    CustomerName           = clientNameByCode.TryGetValue(d.CustomerName ?? d.CustomerId ?? string.Empty, out var n)
+                                                ? n
+                                                : (string.IsNullOrWhiteSpace(d.CustomerName) ? d.CustomerId : d.CustomerName),
+                    Model                  = d.Model,
                     ProjectId              = d.ProjectId ?? string.Empty,
                     ProjectName            = d.ProjectName ?? string.Empty,
                     CurrentFirmwareVersion = d.CurrentFirmwareVersion,
                     Status                 = d.Status.ToString(),
                     LastHeartbeatAt        = d.LastHeartbeatAt,
-                    RegisteredAt           = d.RegisteredAt
+                    RegisteredAt           = d.RegisteredAt,
+                    LastOtaAt              = d.OtaUpdatedAt
                 }).OrderBy(d => d.SerialNumber).ToList();
             }
             catch (Exception ex)
@@ -454,9 +489,23 @@ namespace OTA.API.Services
                 var projects  = await _projectRepository.GetAllAsync(cancellationToken);
                 var repos     = await _repositoryRepository.GetAllAsync(cancellationToken);
                 var firmware  = await _firmwareRepository.GetAllAsync(cancellationToken);
+                var users     = await _userRepository.GetAllAsync(cancellationToken);
+                var devices   = await _deviceRepository.GetAllAsync(cancellationToken);
 
                 var projectMap = projects.ToDictionary(p => p.ProjectId);
-                var repoMap    = repos.ToDictionary(r => r.RepositoryId);
+                // firmware.RepositoryId may hold either the platform RepositoryId or the
+                // MongoDB _id (legacy data). Index by both so lookups succeed.
+                var repoMap    = new Dictionary<string, RepositoryMasterEntity>();
+                foreach (var r in repos)
+                {
+                    if (!string.IsNullOrWhiteSpace(r.RepositoryId)) repoMap[r.RepositoryId] = r;
+                    if (!string.IsNullOrWhiteSpace(r.Id))           repoMap[r.Id]           = r;
+                }
+                var userMap = users.ToDictionary(u => u.UserId, u => u.Name);
+                var deviceCountByVersion = devices
+                    .Where(d => d.CurrentFirmwareVersion != null)
+                    .GroupBy(d => d.CurrentFirmwareVersion!)
+                    .ToDictionary(g => g.Key, g => g.Count());
 
                 return firmware.Select(f =>
                 {
@@ -473,7 +522,17 @@ namespace OTA.API.Services
                         FirmwareVersion  = f.Version,
                         Channel          = f.Channel.ToString(),
                         FirmwareStatus   = f.Status.ToString(),
-                        FirmwareCreatedAt = f.CreatedAt
+                        SupportedModels  = f.SupportedModels ?? new List<string>(),
+                        FileSizeBytes    = f.FileSizeBytes,
+                        CreatedByName    = !string.IsNullOrWhiteSpace(f.CreatedByName)
+                                            ? f.CreatedByName
+                                            : (f.CreatedByUserId != null ? userMap.GetValueOrDefault(f.CreatedByUserId) : null),
+                        FirmwareCreatedAt = f.CreatedAt,
+                        QaVerifiedByName = f.QaVerifiedByUserId != null ? userMap.GetValueOrDefault(f.QaVerifiedByUserId) : null,
+                        QaVerifiedAt     = f.QaVerifiedAt,
+                        ApprovedByName   = f.ApprovedByUserId != null ? userMap.GetValueOrDefault(f.ApprovedByUserId) : null,
+                        ApprovedAt       = f.ApprovedAt,
+                        DeviceCount      = deviceCountByVersion.GetValueOrDefault(f.Version)
                     };
                 }).OrderBy(r => r.ProjectName).ThenBy(r => r.RepositoryName).ThenBy(r => r.FirmwareVersion).ToList();
             }
@@ -496,23 +555,73 @@ namespace OTA.API.Services
                     jobs = await _jobRepository.GetAllAsync(cancellationToken);
 
                 var devices = await _deviceRepository.GetAllAsync(cancellationToken);
-                var deviceMap = devices.ToDictionary(d => d.DeviceId);
+                var clients = await _clientRepository.GetAllAsync(cancellationToken);
+                // Map client code → real client name. Existing devices stored CustomerCode in
+                // CustomerName by mistake; translate it back to a human-readable name here.
+                var clientNameByCode = clients.ToDictionary(c => c.Code, c => c.Name, StringComparer.OrdinalIgnoreCase);
+                // Match jobs by either the platform DeviceId (GUID) or the MongoDB _id —
+                // different code paths use different identifiers when creating jobs.
+                var deviceMap = new Dictionary<string, DeviceEntity>();
+                foreach (var d in devices)
+                {
+                    if (!string.IsNullOrWhiteSpace(d.DeviceId)) deviceMap[d.DeviceId] = d;
+                    if (!string.IsNullOrWhiteSpace(d.Id))       deviceMap[d.Id]       = d;
+                }
+
+                string? ResolveClientName(DeviceEntity? d)
+                {
+                    if (d == null) return null;
+                    var stored = d.CustomerName;
+                    if (string.IsNullOrWhiteSpace(stored)) stored = d.CustomerId;
+                    if (string.IsNullOrWhiteSpace(stored)) return null;
+                    // If what we have is a known code, swap it for the actual name.
+                    if (clientNameByCode.TryGetValue(stored, out var name)) return name;
+                    return stored;
+                }
+
+                // For each device, compute the firmware version that was running just before
+                // each succeeded OTA — the prior succeeded job's FirmwareVersion in chronological order.
+                var prevByJob = new Dictionary<string, string?>();
+                foreach (var deviceJobs in jobs.GroupBy(j => j.DeviceId))
+                {
+                    string? lastSucceededVersion = null;
+                    foreach (var j in deviceJobs.OrderBy(j => j.CreatedAt))
+                    {
+                        prevByJob[j.JobId] = lastSucceededVersion;
+                        if (j.Status == OtaJobStatus.Succeeded && !string.IsNullOrWhiteSpace(j.FirmwareVersion))
+                            lastSucceededVersion = j.FirmwareVersion;
+                    }
+                }
 
                 return jobs.Select(j =>
                 {
                     deviceMap.TryGetValue(j.DeviceId, out var device);
+                    prevByJob.TryGetValue(j.JobId, out var oldVersion);
                     return new DeviceOtaHistoryRowDto
                     {
-                        DeviceId        = j.DeviceId,
-                        DeviceSerial    = j.DeviceSerialNumber,
-                        DeviceName      = device?.SiteName,
-                        ProjectName     = device?.ProjectName ?? string.Empty,
-                        FirmwareVersion = j.FirmwareVersion,
-                        JobStatus       = j.Status.ToString(),
-                        StartedAt       = j.StartedAt,
-                        CompletedAt     = j.CompletedAt
+                        DeviceId           = j.DeviceId,
+                        DeviceSerial       = j.DeviceSerialNumber,
+                        DeviceName         = device?.SiteName,
+                        MacImeiIp          = device?.MacImeiIp ?? device?.SerialNumber,
+                        CustomerName       = ResolveClientName(device),
+                        Model              = device?.Model ?? string.Empty,
+                        ProjectName            = device?.ProjectName ?? string.Empty,
+                        RepositoryName         = device?.RepositoryName,
+                        OldFirmwareVersion     = oldVersion,
+                        FirmwareVersion        = j.FirmwareVersion,
+                        CurrentFirmwareVersion = device?.CurrentFirmwareVersion,
+                        PendingFirmwareVersion = device?.PendingFirmwareVersion,
+                        JobStatus              = j.Status.ToString(),
+                        OtaStatus              = device?.OtaStatus,
+                        OtaProgress            = device?.OtaProgress ?? 0,
+                        DeviceStatus           = device?.Status.ToString() ?? string.Empty,
+                        LastHeartbeatAt        = device?.LastHeartbeatAt,
+                        StartedAt              = j.StartedAt,
+                        CompletedAt            = j.CompletedAt,
+                        PushedAt               = j.AcknowledgedAt ?? j.CreatedAt,
+                        PushedByName           = j.AcknowledgedByName
                     };
-                }).OrderByDescending(r => r.StartedAt ?? r.CompletedAt).ToList();
+                }).OrderByDescending(r => r.PushedAt ?? r.StartedAt ?? r.CompletedAt).ToList();
             }
             catch (Exception ex)
             {

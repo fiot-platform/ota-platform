@@ -24,6 +24,14 @@ namespace OTA.API.Models.DTOs
         [MaxLength(36)]
         public string ProjectId { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Optional client code. When set, the repository is tagged to a specific client of the
+        /// project (useful when a project serves multiple clients with separate repositories).
+        /// When omitted, the project's primary client is used.
+        /// </summary>
+        [MaxLength(100)]
+        public string? ClientCode { get; set; }
+
         /// <summary>Optional description of the repository's purpose.</summary>
         [MaxLength(1000)]
         public string? Description { get; set; }
@@ -53,6 +61,14 @@ namespace OTA.API.Models.DTOs
 
         /// <summary>Active / inactive state toggle.</summary>
         public bool? IsActive { get; set; }
+
+        /// <summary>Moves this repository to a different project.</summary>
+        [MaxLength(36)]
+        public string? ProjectId { get; set; }
+
+        /// <summary>Updated client code. Pass an empty string to clear and inherit from the project.</summary>
+        [MaxLength(100)]
+        public string? ClientCode { get; set; }
     }
 
     /// <summary>Request body for triggering a manual Gitea sync for a repository.</summary>
@@ -89,6 +105,8 @@ namespace OTA.API.Models.DTOs
         public string GiteaRepo { get; set; } = string.Empty;
         public string ProjectId { get; set; } = string.Empty;
         public string? ProjectName { get; set; }
+        public string? ClientCode { get; set; }
+        public string? ClientName { get; set; }
         public long GiteaRepoId { get; set; }
         public string GiteaRepoName { get; set; } = string.Empty;
         public string GiteaOwner { get; set; } = string.Empty;

@@ -1,10 +1,26 @@
 using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace OTA.API.Models.DTOs
 {
     // ─────────────────────────────────────────────────────────────────────────
     // Project DTOs
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Lightweight client reference embedded inside a project document.
+    /// BSON attributes allow this class to be stored directly in MongoDB as an array element.
+    /// </summary>
+    public class ProjectClientRef
+    {
+        /// <summary>Client code (e.g. "CUSTOM_00001") — used as the legacy customerId.</summary>
+        [BsonElement("code")]
+        public string Code { get; set; } = string.Empty;
+
+        /// <summary>Display name of the client organisation.</summary>
+        [BsonElement("name")]
+        public string Name { get; set; } = string.Empty;
+    }
 
     /// <summary>Request body for creating a new project.</summary>
     public sealed class CreateProjectRequest
@@ -19,15 +35,13 @@ namespace OTA.API.Models.DTOs
         [MaxLength(1000)]
         public string? Description { get; set; }
 
-        /// <summary>Customer tenant identifier that will own this project.</summary>
-        [Required(ErrorMessage = "CustomerId is required.")]
-        [MaxLength(36)]
-        public string CustomerId { get; set; } = string.Empty;
-
-        /// <summary>Display name of the customer (used for denormalisation).</summary>
-        [Required(ErrorMessage = "CustomerName is required.")]
-        [MaxLength(200)]
-        public string CustomerName { get; set; } = string.Empty;
+        /// <summary>
+        /// One or more client codes that own this project (e.g. ["CUSTOM_00001", "CUSTOM_00002"]).
+        /// At least one code is required.
+        /// </summary>
+        [Required(ErrorMessage = "At least one client must be selected.")]
+        [MinLength(1, ErrorMessage = "At least one client must be selected.")]
+        public List<string> ClientCodes { get; set; } = new();
 
         /// <summary>Business unit or division responsible for this project.</summary>
         [MaxLength(200)]
@@ -53,6 +67,9 @@ namespace OTA.API.Models.DTOs
         [MaxLength(1000)]
         public string? Description { get; set; }
 
+        /// <summary>Replaces the full client list when provided.</summary>
+        public List<string>? ClientCodes { get; set; }
+
         /// <summary>Updated business unit.</summary>
         [MaxLength(200)]
         public string? BusinessUnit { get; set; }
@@ -75,6 +92,7 @@ namespace OTA.API.Models.DTOs
         public string Name { get; set; } = string.Empty;
         public string CustomerId { get; set; } = string.Empty;
         public string CustomerName { get; set; } = string.Empty;
+        public List<ProjectClientRef> Clients { get; set; } = new();
         public string? BusinessUnit { get; set; }
         public bool IsActive { get; set; }
         public int RepositoryCount { get; set; }
@@ -91,6 +109,7 @@ namespace OTA.API.Models.DTOs
         public string? Description { get; set; }
         public string CustomerId { get; set; } = string.Empty;
         public string CustomerName { get; set; } = string.Empty;
+        public List<ProjectClientRef> Clients { get; set; } = new();
         public string? BusinessUnit { get; set; }
         public bool IsActive { get; set; }
         public string? GiteaOrgName { get; set; }

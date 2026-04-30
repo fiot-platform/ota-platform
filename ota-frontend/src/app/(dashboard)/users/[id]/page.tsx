@@ -233,8 +233,8 @@ export default function UserDetailPage() {
             {!user.projectScope?.length ? (
               <div className="flex flex-col items-center justify-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                 <FolderKanban className="w-8 h-8 text-slate-300 mb-2" />
-                <p className="text-sm font-medium text-slate-500">No project restrictions</p>
-                <p className="text-xs text-slate-400 mt-0.5">This user has access to all projects</p>
+                <p className="text-sm font-medium text-danger-600">No projects assigned</p>
+                <p className="text-xs text-slate-400 mt-0.5">This user cannot see any projects, devices or firmware until projects are assigned.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

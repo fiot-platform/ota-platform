@@ -137,6 +137,38 @@ namespace OTA.API.Services
             return SendAsync(toEmail, userName, subject, body, cancellationToken);
         }
 
+        public Task SendCrudNotificationAsync(
+            string toEmail, string recipientName, string action, string entityType, string entityName,
+            CancellationToken cancellationToken = default)
+        {
+            var actionColor = action.ToLowerInvariant() switch
+            {
+                "created" => "#16a34a",
+                "updated" => "#2563eb",
+                "deleted" => "#dc2626",
+                _         => "#475569"
+            };
+            var subject = $"[OTA Platform] {entityType} {Escape(entityName)} {action}";
+            var body = EmailTemplate($@"
+                <h2 style='color:{actionColor};'>{Escape(entityType)} {Escape(action)} ✔</h2>
+                <p>Hi <strong>{Escape(recipientName)}</strong>,</p>
+                <p>The following action was performed on the OTA Platform:</p>
+                <table style='border-collapse:collapse;margin:16px 0;background:#f8fafc;border-radius:8px;padding:12px;'>
+                    <tr><td style='padding:6px 16px 6px 0;color:#64748b;'>Action</td>
+                        <td style='padding:6px 0;font-weight:600;color:{actionColor};'>{Escape(action)}</td></tr>
+                    <tr><td style='padding:6px 16px 6px 0;color:#64748b;'>Entity Type</td>
+                        <td style='padding:6px 0;font-weight:600;'>{Escape(entityType)}</td></tr>
+                    <tr><td style='padding:6px 16px 6px 0;color:#64748b;'>Name / ID</td>
+                        <td style='padding:6px 0;font-weight:600;font-family:monospace;'>{Escape(entityName)}</td></tr>
+                    <tr><td style='padding:6px 16px 6px 0;color:#64748b;'>Performed by</td>
+                        <td style='padding:6px 0;font-weight:600;'>{Escape(recipientName)}</td></tr>
+                    <tr><td style='padding:6px 16px 6px 0;color:#64748b;'>Timestamp</td>
+                        <td style='padding:6px 0;'>{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC</td></tr>
+                </table>
+                <p>Log in to the OTA Platform to review the change.</p>");
+            return SendAsync(toEmail, recipientName, subject, body, cancellationToken);
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────
 
         private SmtpClient BuildSmtpClient()

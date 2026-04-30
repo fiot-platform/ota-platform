@@ -55,6 +55,38 @@ namespace OTA.API.Repositories
             Collection.Indexes.CreateMany(indexModels);
         }
 
+        /// <summary>
+        /// Accepts either a MongoDB ObjectId string or a platform-generated JobId GUID.
+        /// Tries ObjectId first; falls back to the <c>jobId</c> field so callers that hold
+        /// either identifier can resolve the job without knowing which format they have.
+        /// </summary>
+        public override async Task<OtaJobEntity?> GetByIdAsync(string id, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ArgumentException("Id must not be null or empty.", nameof(id));
+
+            try
+            {
+                // 1. Try MongoDB ObjectId
+                if (ObjectId.TryParse(id, out var objectId))
+                {
+                    var byOid = await Collection
+                        .Find(Builders<OtaJobEntity>.Filter.Eq("_id", objectId))
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (byOid != null) return byOid;
+                }
+
+                // 2. Fall back to GUID JobId field
+                return await Collection
+                    .Find(Builders<OtaJobEntity>.Filter.Eq(j => j.JobId, id))
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to retrieve OTA job '{id}'.", ex);
+            }
+        }
+
         /// <inheritdoc/>
         public async Task<List<OtaJobEntity>> GetByRolloutIdAsync(string rolloutId, CancellationToken cancellationToken = default)
         {

@@ -4,13 +4,14 @@ import * as React from 'react'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronDown, LogOut, User, Settings } from 'lucide-react'
+import { ChevronDown, LogOut, User } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { useGiteaProfile } from '@/hooks/useGiteaProfile'
 import { RoleBadge } from '@/components/ui/Badge'
 import { useRouter } from 'next/navigation'
-import { NotificationBell } from '@/components/layout/NotificationBell'
+import { NotificationBell } from '@/components/ui/NotificationBell'
+import { QuickActionsMenu } from '@/components/layout/QuickActionsMenu'
 
 // ─── Route Title Map ──────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ const routeTitles: Record<string, string> = {
   '/firmware': 'Firmware Versions',
   '/devices': 'Devices',
   '/ota-rollouts': 'OTA Rollouts',
+  '/device-ota':   'Device OTA',
   '/users': 'User Management',
   '/audit-logs': 'Audit Logs',
   '/reports': 'Reports & Analytics',
@@ -50,7 +52,7 @@ function UserAvatar({ avatarUrl, displayName }: { avatarUrl?: string | null; dis
 
   if (avatarUrl && !imgError) {
     return (
-      <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-accent-500 bg-white flex items-center justify-center">
+      <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-white flex items-center justify-center">
         <Image
           src={avatarUrl}
           alt={displayName}
@@ -97,21 +99,26 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
   return (
     <header
       className={clsx(
-        'fixed top-0 right-0 z-30 h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 transition-all duration-300 shadow-sm',
-        sidebarCollapsed ? 'left-16' : 'left-[260px]'
+        'fixed top-0 right-0 z-30 h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 transition-all duration-300 shadow-sm',
+        // Mobile: always offset by collapsed sidebar (w-16). Desktop: respect collapsed state.
+        'left-16',
+        sidebarCollapsed ? 'md:left-16' : 'md:left-[260px]'
       )}
     >
       {/* Left: Page title */}
-      <div>
-        <h2 className="text-lg font-semibold text-primary-900">{pageTitle}</h2>
-        <p className="text-xs text-slate-400 capitalize">
+      <div className="min-w-0">
+        <h2 className="text-base md:text-lg font-semibold text-primary-900 truncate">{pageTitle}</h2>
+        <p className="text-xs text-slate-400 capitalize hidden sm:block">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
         </p>
       </div>
 
       {/* Right: Actions */}
       <div className="flex items-center gap-3">
-        {/* Notification Bell */}
+        {/* Quick Actions — role-based shortcuts */}
+        <QuickActionsMenu />
+
+        {/* Notification Bell — server-driven inbox */}
         <NotificationBell />
 
         {/* User Menu */}
@@ -150,14 +157,6 @@ export function Header({ sidebarCollapsed }: HeaderProps) {
               >
                 <User className="w-4 h-4 text-slate-400" />
                 Profile Settings
-              </DropdownMenu.Item>
-
-              <DropdownMenu.Item
-                className="flex items-center gap-2 px-4 py-2 text-sm text-primary-700 hover:bg-slate-50 cursor-pointer transition-colors outline-none"
-                onClick={() => router.push('/profile')}
-              >
-                <Settings className="w-4 h-4 text-slate-400" />
-                Preferences
               </DropdownMenu.Item>
 
               <DropdownMenu.Separator className="h-px bg-slate-100 my-1" />

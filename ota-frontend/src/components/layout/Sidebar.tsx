@@ -11,6 +11,7 @@ import {
   Cpu,
   MonitorSmartphone,
   RefreshCw,
+  FlaskConical,
   Users,
   FileText,
   BarChart3,
@@ -20,16 +21,15 @@ import {
   ChevronDown,
   LogOut,
   Shield,
-  TrendingUp,
   PieChart,
   FolderGit2,
   Package,
   Layers,
   History,
   Activity,
-  GitCommit,
   Settings,
   Mail,
+  Building2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
@@ -99,6 +99,12 @@ const navigation: NavSection[] = [
         icon: <MonitorSmartphone className="w-4 h-4" />,
         module: 'Devices',
       },
+      {
+        label: 'Clients',
+        href: '/clients',
+        icon: <Building2 className="w-4 h-4" />,
+        module: 'Clients',
+      },
     ],
   },
   {
@@ -108,6 +114,12 @@ const navigation: NavSection[] = [
         label: 'OTA Rollouts',
         href: '/ota-rollouts',
         icon: <RefreshCw className="w-4 h-4" />,
+        module: 'OtaRollouts',
+      },
+      {
+        label: 'Device OTA',
+        href: '/device-ota',
+        icon: <FlaskConical className="w-4 h-4" />,
         module: 'OtaRollouts',
       },
     ],
@@ -140,8 +152,6 @@ const navigation: NavSection[] = [
         icon: <BarChart3 className="w-4 h-4" />,
         module: 'Reports',
         children: [
-          { label: 'Firmware Trends',          href: '/reports/firmware-trends',   icon: <TrendingUp    className="w-3.5 h-3.5" /> },
-          { label: 'Rollout Success',           href: '/reports/rollout-success',   icon: <BarChart3     className="w-3.5 h-3.5" /> },
           { label: 'Device Status',             href: '/reports/device-status',     icon: <PieChart      className="w-3.5 h-3.5" /> },
           { label: 'Users',                     href: '/reports/users',             icon: <Users         className="w-3.5 h-3.5" /> },
           { label: 'Projects',                  href: '/reports/projects',          icon: <FolderGit2    className="w-3.5 h-3.5" /> },
@@ -151,7 +161,6 @@ const navigation: NavSection[] = [
           { label: 'Project Repos & Firmware',  href: '/reports/project-repos',     icon: <Layers        className="w-3.5 h-3.5" /> },
           { label: 'Device OTA History',        href: '/reports/device-ota',        icon: <History       className="w-3.5 h-3.5" /> },
           { label: 'Daily OTA Progress',        href: '/reports/daily-progress',    icon: <Activity      className="w-3.5 h-3.5" /> },
-          { label: 'Firmware Stage',            href: '/reports/firmware-stage',    icon: <GitCommit     className="w-3.5 h-3.5" /> },
         ],
       },
     ],
@@ -184,9 +193,23 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { data: giteaProfile } = useGiteaProfile()
   const [imgError, setImgError] = React.useState(false)
   const [openItems, setOpenItems] = React.useState<Set<string>>(new Set())
+  const [isMobile, setIsMobile] = React.useState(false)
+  const [popup, setPopup] = React.useState<{ item: NavItem; y: number } | null>(null)
+  const hideTimer = React.useRef<ReturnType<typeof setTimeout>>()
 
   const displayName = giteaProfile?.login ?? user?.fullName ?? user?.email?.split('@')[0] ?? 'User'
   const avatarUrl   = (!imgError && giteaProfile?.avatar_url) ? giteaProfile.avatar_url : null
+
+  // Track mobile breakpoint
+  React.useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // Close popup on route change
+  React.useEffect(() => { setPopup(null) }, [pathname])
 
   // Auto-open parent if a child route is currently active
   React.useEffect(() => {
@@ -215,27 +238,49 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const isParentActive = (item: NavItem) =>
     item.children?.some((child) => pathname.startsWith(child.href)) ?? false
 
+  // "showText" = desktop expanded state. On mobile sidebar is always icon-only visually.
+  const showText = !collapsed
+  // Icon-only when collapsed OR on mobile
+  const isIconOnly = collapsed || isMobile
+
+  const openPopup = (item: NavItem, el: HTMLElement) => {
+    if (!isIconOnly) return
+    clearTimeout(hideTimer.current)
+    const rect = el.getBoundingClientRect()
+    setPopup({ item, y: rect.top })
+  }
+
+  const scheduleClose = () => {
+    hideTimer.current = setTimeout(() => setPopup(null), 150)
+  }
+
+  const cancelClose = () => clearTimeout(hideTimer.current)
+
   return (
     <aside
       className={clsx(
         'h-screen flex flex-col bg-primary-900 fixed left-0 top-0 z-40 transition-all duration-300 shadow-sidebar',
-        collapsed ? 'w-16' : 'w-[260px]'
+        // Mobile: always w-16. Desktop: w-16 or w-[260px]
+        'w-16',
+        collapsed ? 'md:w-16' : 'md:w-[260px]'
       )}
     >
       {/* Logo */}
       <div className={clsx(
-        'flex items-center h-16 border-b border-primary-800 flex-shrink-0',
-        collapsed ? 'justify-center px-3' : 'px-4 gap-3'
+        'flex items-center h-16 border-b border-primary-800 flex-shrink-0 justify-center px-3',
+        showText && 'md:justify-start md:px-4 md:gap-3'
       )}>
-        <Image
-          src="/logo.png"
-          alt="OTA Rax Logo"
-          width={collapsed ? 36 : 40}
-          height={collapsed ? 36 : 40}
-          className="flex-shrink-0 object-contain"
-        />
-        {!collapsed && (
-          <div className="min-w-0">
+        <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-white flex items-center justify-center p-1">
+          <Image
+            src="/logo.png"
+            alt="OTA Rax Logo"
+            width={36}
+            height={36}
+            className="object-contain"
+          />
+        </div>
+        {showText && (
+          <div className="hidden md:block min-w-0">
             <span className="text-white font-bold text-sm leading-tight block truncate">OTA Platform</span>
             <span className="text-slate-400 text-xs">Admin Portal</span>
           </div>
@@ -243,15 +288,15 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 scrollbar-thin px-2">
+      <nav className="flex-1 overflow-y-auto py-4 px-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {navigation.map((section) => {
           const visibleItems = section.items.filter((item) => can(item.module, 'view'))
           if (visibleItems.length === 0) return null
 
           return (
             <div key={section.section} className="mb-4">
-              {!collapsed && (
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-1">
+              {showText && (
+                <p className="hidden md:block text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-1">
                   {section.section}
                 </p>
               )}
@@ -263,39 +308,34 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   const isOpen = openItems.has(item.label)
 
                   return (
-                    <div key={item.label}>
+                    <div
+                      key={item.label}
+                      onMouseEnter={(e) => openPopup(item, e.currentTarget)}
+                      onMouseLeave={scheduleClose}
+                    >
                       <button
-                        onClick={() =>
-                          collapsed
-                            ? router.push(item.children![0].href)
-                            : toggleItem(item.label)
-                        }
-                        title={collapsed ? item.label : undefined}
+                        onClick={() => showText ? toggleItem(item.label) : undefined}
                         className={clsx(
                           'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 mb-0.5',
-                          collapsed ? 'justify-center' : '',
+                          'justify-center',
+                          showText && 'md:justify-start',
                           parentActive
                             ? 'text-accent-300 bg-primary-800'
                             : 'text-slate-400 hover:text-white hover:bg-primary-800'
                         )}
                       >
                         <span className="flex-shrink-0">{item.icon}</span>
-                        {!collapsed && (
+                        {showText && (
                           <>
-                            <span className="truncate flex-1 text-left">{item.label}</span>
-                            <ChevronDown
-                              className={clsx(
-                                'w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200',
-                                isOpen ? 'rotate-180' : ''
-                              )}
-                            />
+                            <span className="hidden md:block truncate flex-1 text-left">{item.label}</span>
+                            <ChevronDown className={clsx('hidden md:block w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200', isOpen ? 'rotate-180' : '')} />
                           </>
                         )}
                       </button>
 
-                      {/* Sub-items */}
-                      {!collapsed && isOpen && (
-                        <div className="ml-3 pl-2.5 border-l border-primary-700 mb-1 mt-0.5">
+                      {/* Sub-items inline — desktop expanded only */}
+                      {showText && isOpen && (
+                        <div className="hidden md:block ml-3 pl-2.5 border-l border-primary-700 mb-1 mt-0.5">
                           {item.children.map((child) => (
                             <Link
                               key={child.href}
@@ -319,26 +359,31 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
                 // ── Regular nav item ────────────────────────────────────────
                 return (
-                  <Link
+                  <div
                     key={item.href}
-                    href={item.href!}
-                    className={clsx(
-                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 mb-0.5',
-                      collapsed ? 'justify-center' : '',
-                      isActive(item.href!)
-                        ? 'bg-accent-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-white hover:bg-primary-800'
-                    )}
-                    title={collapsed ? item.label : undefined}
+                    onMouseEnter={(e) => openPopup(item, e.currentTarget)}
+                    onMouseLeave={scheduleClose}
                   >
-                    <span className="flex-shrink-0">{item.icon}</span>
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                    {!collapsed && item.badge && (
-                      <span className="ml-auto bg-accent-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
-                        {item.badge}
-                      </span>
-                    )}
-                  </Link>
+                    <Link
+                      href={item.href!}
+                      className={clsx(
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 mb-0.5',
+                        'justify-center',
+                        showText && 'md:justify-start',
+                        isActive(item.href!)
+                          ? 'bg-accent-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white hover:bg-primary-800'
+                      )}
+                    >
+                      <span className="flex-shrink-0">{item.icon}</span>
+                      {showText && <span className="hidden md:block truncate">{item.label}</span>}
+                      {showText && item.badge && (
+                        <span className="hidden md:block ml-auto bg-accent-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
+                          {item.badge}
+                        </span>
+                      )}
+                    </Link>
+                  </div>
                 )
               })}
             </div>
@@ -348,8 +393,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* User Profile */}
       <div className="flex-shrink-0 border-t border-primary-800 p-3">
-        {!collapsed ? (
-          <div className="space-y-2">
+        {/* Expanded — desktop only when not collapsed */}
+        {showText && (
+          <div className="hidden md:block space-y-2">
             <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-primary-800 transition-colors">
               {avatarUrl ? (
                 <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-accent-500 bg-white flex items-center justify-center">
@@ -372,34 +418,80 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               <LogOut className="w-4 h-4" /><span>Sign Out</span>
             </button>
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            {avatarUrl ? (
-              <div className="w-8 h-8 rounded-full overflow-hidden ring-2 ring-accent-500 bg-white flex items-center justify-center" title={displayName}>
-                <Image src={avatarUrl} alt={displayName} width={32} height={32}
-                  className="w-8 h-8 object-contain" onError={() => setImgError(true)} unoptimized />
-              </div>
-            ) : (
-              <div className="w-8 h-8 bg-accent-600 rounded-full flex items-center justify-center" title={displayName}>
-                <span className="text-white text-sm font-semibold">{displayName.charAt(0).toUpperCase()}</span>
-              </div>
-            )}
-            <button onClick={logout} title="Sign Out"
-              className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-primary-800 rounded-lg transition-colors">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
         )}
+        {/* Collapsed — always visible on mobile, visible on desktop when collapsed */}
+        <div className={clsx('flex flex-col items-center gap-2', showText && 'md:hidden')}>
+          {avatarUrl ? (
+            <div className="w-8 h-8 rounded-full overflow-hidden ring-2 ring-accent-500 bg-white flex items-center justify-center" title={displayName}>
+              <Image src={avatarUrl} alt={displayName} width={32} height={32}
+                className="w-8 h-8 object-contain" onError={() => setImgError(true)} unoptimized />
+            </div>
+          ) : (
+            <div className="w-8 h-8 bg-accent-600 rounded-full flex items-center justify-center" title={displayName}>
+              <span className="text-white text-sm font-semibold">{displayName.charAt(0).toUpperCase()}</span>
+            </div>
+          )}
+          <button onClick={logout} title="Sign Out"
+            className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-primary-800 rounded-lg transition-colors">
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Collapse Toggle */}
+      {/* Collapse Toggle — desktop only */}
       <button onClick={onToggle}
-        className="absolute -right-3 top-20 w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center shadow-sm hover:bg-slate-50 transition-colors z-10"
+        className="absolute -right-3 top-20 w-6 h-6 bg-white border border-slate-200 rounded-full hidden md:flex items-center justify-center shadow-sm hover:bg-slate-50 transition-colors z-10"
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
         {collapsed
           ? <ChevronRight className="w-3 h-3 text-primary-700" />
           : <ChevronLeft  className="w-3 h-3 text-primary-700" />}
       </button>
+
+      {/* Hover Popup — fixed positioned, shown in icon-only mode */}
+      {popup && (() => {
+        const top = Math.min(popup.y, window.innerHeight - 320)
+        const availableHeight = window.innerHeight - top - 16
+        return (
+        <div
+          className="fixed z-[9999]"
+          style={{ top, left: 64 }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          {popup.item.children ? (
+            <div className="ml-2 bg-white rounded-xl shadow-xl border border-slate-200 py-2 min-w-[200px] flex flex-col" style={{ maxHeight: availableHeight }}>
+              <p className="px-3 py-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1 flex-shrink-0">
+                {popup.item.label}
+              </p>
+              <div className="overflow-y-auto">
+              {popup.item.children.map((child) => (
+                <Link
+                  key={child.href}
+                  href={child.href}
+                  onClick={() => setPopup(null)}
+                  className={clsx(
+                    'flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors',
+                    isActive(child.href)
+                      ? 'text-accent-600 bg-accent-50'
+                      : 'text-slate-700 hover:bg-slate-50'
+                  )}
+                >
+                  <span className={isActive(child.href) ? 'text-accent-500' : 'text-slate-400'}>
+                    {child.icon}
+                  </span>
+                  <span className="truncate">{child.label}</span>
+                </Link>
+              ))}
+              </div>
+            </div>
+          ) : (
+            <div className="ml-2 bg-slate-900 text-white text-xs font-medium rounded-lg px-3 py-2 whitespace-nowrap shadow-xl">
+              {popup.item.label}
+            </div>
+          )}
+        </div>
+        )
+      })()}
     </aside>
   )
 }

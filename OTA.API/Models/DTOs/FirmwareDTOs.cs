@@ -59,6 +59,12 @@ namespace OTA.API.Models.DTOs
         /// <summary>Whether the update is mandatory for targeted devices.</summary>
         public bool IsMandate { get; set; } = false;
 
+        /// <summary>
+        /// When true the firmware must pass a Trial Device OTA before it is
+        /// eligible for the regular check-update flow.
+        /// </summary>
+        public bool CheckTrial { get; set; } = false;
+
         /// <summary>List of compatible device model identifiers.</summary>
         public List<string> SupportedModels { get; set; } = new();
 
@@ -124,6 +130,15 @@ namespace OTA.API.Models.DTOs
         public string? QaRemarks { get; set; }
     }
 
+    /// <summary>Request body for completing a Trial OTA, unlocking the firmware for regular OTA.</summary>
+    public sealed class CompleteTrialRequest
+    {
+        /// <summary>Remarks from the tester describing what was verified during the trial.</summary>
+        [Required(ErrorMessage = "Remarks are required.")]
+        [MaxLength(5000)]
+        public string? Remarks { get; set; }
+    }
+
     /// <summary>Request body for assigning or changing a firmware version's distribution channel.</summary>
     public sealed class AssignChannelRequest
     {
@@ -143,6 +158,8 @@ namespace OTA.API.Models.DTOs
         public string Channel { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public bool IsMandate { get; set; }
+        public bool CheckTrial { get; set; }
+        public bool TrialCompleted { get; set; }
         public long FileSizeBytes { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? ApprovedAt { get; set; }
@@ -166,6 +183,9 @@ namespace OTA.API.Models.DTOs
         /// <summary>Display name of the parent project (populated by service).</summary>
         public string? ProjectName { get; set; }
 
+        /// <summary>Display name of the project's client/customer (populated by service).</summary>
+        public string? ClientName { get; set; }
+
         public string Version { get; set; } = string.Empty;
         public long GiteaReleaseId { get; set; }
         public string GiteaTagName { get; set; } = string.Empty;
@@ -181,6 +201,19 @@ namespace OTA.API.Models.DTOs
         public string Channel { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public bool IsMandate { get; set; }
+
+        /// <summary>True when this firmware requires a successful Trial OTA before regular deployment.</summary>
+        public bool CheckTrial { get; set; }
+
+        /// <summary>True once a Trial OTA has been completed successfully.</summary>
+        public bool TrialCompleted { get; set; }
+
+        /// <summary>UTC timestamp when the trial was marked complete.</summary>
+        public DateTime? TrialCompletedAt { get; set; }
+
+        /// <summary>Remarks recorded by the tester at trial completion.</summary>
+        public string? TrialRemarks { get; set; }
+
         public List<string> SupportedModels { get; set; } = new();
         public List<string> SupportedHardwareRevisions { get; set; } = new();
         public string? MinRequiredVersion { get; set; }
@@ -284,5 +317,40 @@ namespace OTA.API.Models.DTOs
 
         /// <summary>Public URL from which the firmware binary can be downloaded.</summary>
         public string DownloadUrl { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request body for copying a parent firmware version into multiple target repositories.
+    /// The parent's binary is fetched from its existing DownloadUrl, then re-uploaded to each
+    /// target repository's Gitea repo. A new firmware record is created per target.
+    /// </summary>
+    public sealed class CopyFirmwareToRepositoriesRequest
+    {
+        /// <summary>One or more target RepositoryId values (Mongo _id of RepositoryMasterEntity).</summary>
+        [Required]
+        public List<string> TargetRepositoryIds { get; set; } = new();
+    }
+
+    /// <summary>Per-repository result of a copy operation.</summary>
+    public sealed class CopyFirmwareTargetResult
+    {
+        public string RepositoryId { get; set; } = string.Empty;
+        public string RepositoryName { get; set; } = string.Empty;
+        public string ClientName { get; set; } = string.Empty;
+        /// <summary>"created" | "skipped" | "failed"</summary>
+        public string Status { get; set; } = string.Empty;
+        /// <summary>Reason for skip/failure. Null on success.</summary>
+        public string? Reason { get; set; }
+        /// <summary>FirmwareId of the new record (only when Status = "created").</summary>
+        public string? NewFirmwareId { get; set; }
+    }
+
+    /// <summary>Aggregate response for the copy-to-repositories endpoint.</summary>
+    public sealed class CopyFirmwareToRepositoriesResponse
+    {
+        public int CreatedCount { get; set; }
+        public int SkippedCount { get; set; }
+        public int FailedCount { get; set; }
+        public List<CopyFirmwareTargetResult> Results { get; set; } = new();
     }
 }

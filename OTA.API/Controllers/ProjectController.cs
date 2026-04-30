@@ -56,6 +56,7 @@ namespace OTA.API.Controllers
         private async Task<List<string>?> GetProjectScopeAsync(CancellationToken cancellationToken = default)
         {
             var role = User.FindFirstValue(ClaimTypes.Role) ?? User.FindFirstValue("role") ?? string.Empty;
+
             if (role is "SuperAdmin" or "PlatformAdmin") return null;
 
             var userId = CurrentUserId;

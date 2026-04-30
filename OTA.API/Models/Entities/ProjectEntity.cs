@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using OTA.API.Models.DTOs;
 
 namespace OTA.API.Models.Entities
 {
@@ -43,6 +44,13 @@ namespace OTA.API.Models.Entities
         /// <summary>Display name of the customer for denormalised reads (avoids a join).</summary>
         [BsonElement("customerName")]
         public string CustomerName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// All clients associated with this project.
+        /// The first entry mirrors CustomerId / CustomerName for backward-compatible queries.
+        /// </summary>
+        [BsonElement("clients")]
+        public List<ProjectClientRef> Clients { get; set; } = new();
 
         /// <summary>
         /// Business unit or division within the customer organisation responsible for this project.

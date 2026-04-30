@@ -38,13 +38,15 @@ export default function DashboardLayout({
     <div className="min-h-screen bg-slate-50">
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
       <Header sidebarCollapsed={collapsed} />
+      {/* Mobile: always offset by w-16. Desktop: offset by collapsed/expanded width */}
       <main
         className={clsx(
           'min-h-screen pt-16 transition-all duration-300',
-          collapsed ? 'pl-16' : 'pl-[260px]'
+          'pl-16',
+          collapsed ? 'md:pl-16' : 'md:pl-[260px]'
         )}
       >
-        <div className="p-6 max-w-[1400px] mx-auto">
+        <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
           {children}
         </div>
       </main>

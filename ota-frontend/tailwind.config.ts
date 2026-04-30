@@ -103,6 +103,7 @@ const config: Config = {
         'fade-in': 'fadeIn 0.2s ease-in-out',
         'slide-in': 'slideIn 0.3s ease-out',
         'spin-slow': 'spin 3s linear infinite',
+        marquee: 'marquee 18s linear infinite',
       },
       keyframes: {
         fadeIn: {
@@ -112,6 +113,10 @@ const config: Config = {
         slideIn: {
           '0%': { transform: 'translateX(-10px)', opacity: '0' },
           '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
+        marquee: {
+          '0%':   { transform: 'translateX(0%)' },
+          '100%': { transform: 'translateX(-50%)' },
         },
       },
     },

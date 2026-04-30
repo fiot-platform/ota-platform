@@ -124,6 +124,9 @@ try
     // ── HTTP context accessor (required by some middleware) ───────────────────
     builder.Services.AddHttpContextAccessor();
 
+    // ── Response caching ──────────────────────────────────────────────────────
+    builder.Services.AddResponseCaching(opts => { opts.MaximumBodySize = 4 * 1024 * 1024; });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Build the application
     // ─────────────────────────────────────────────────────────────────────────
@@ -144,6 +147,9 @@ try
                 "The API will still start; ensure the database is reachable.");
         }
     }
+
+    // ── Response caching ──────────────────────────────────────────────────────
+    app.UseResponseCaching();
 
     // ── Global exception handler (must be first in pipeline) ─────────────────
     app.UseMiddleware<ExceptionMiddleware>();

@@ -8,7 +8,16 @@
     "start": "next start -p 3000",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "generate-icons": "node scripts/generate-icons.mjs"
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "test": "playwright test --project=chromium",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed --project=chromium",
+    "test:report": "playwright show-report",
+    "capture-screenshots": "playwright test --project=manual-screenshots",
+    "generate-manual": "npx ts-node --project tsconfig.scripts.json scripts/generate-manual.ts",
+    "generate-manual-docx": "npx ts-node --project tsconfig.scripts.json scripts/generate-manual-docx.ts",
+    "manual": "npm run capture-screenshots && npm run generate-manual && npm run generate-manual-docx",
+    "manual-docx": "npm run capture-screenshots && npm run generate-manual-docx"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
@@ -48,17 +57,21 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^20.14.11",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^7.16.1",
     "@typescript-eslint/parser": "^7.16.1",
     "autoprefixer": "^10.4.19",
+    "docx": "^9.6.1",
+    "dotenv": "^16.6.1",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.2.5",
     "postcss": "^8.4.39",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.6",
+    "ts-node": "^10.9.2",
     "typescript": "^5.5.3"
   }
 }

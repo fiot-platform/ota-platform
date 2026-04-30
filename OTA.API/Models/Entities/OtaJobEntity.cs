@@ -88,6 +88,29 @@ namespace OTA.API.Models.Entities
         [BsonIgnoreIfNull]
         public string? FailureReason { get; set; }
 
+        // ── Acknowledgement (SuperAdmin / ReleaseManager must approve before device picks up) ──
+
+        /// <summary>UserId of the platform user who acknowledged or rejected this job.</summary>
+        [BsonElement("acknowledgedByUserId")]
+        [BsonIgnoreIfNull]
+        public string? AcknowledgedByUserId { get; set; }
+
+        /// <summary>Display name of the user who acknowledged or rejected this job.</summary>
+        [BsonElement("acknowledgedByName")]
+        [BsonIgnoreIfNull]
+        public string? AcknowledgedByName { get; set; }
+
+        /// <summary>UTC timestamp when a SuperAdmin or ReleaseManager acknowledged this job.</summary>
+        [BsonElement("acknowledgedAt")]
+        [BsonIgnoreIfNull]
+        [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+        public DateTime? AcknowledgedAt { get; set; }
+
+        /// <summary>Optional notes left by the approver / rejector.</summary>
+        [BsonElement("acknowledgementNotes")]
+        [BsonIgnoreIfNull]
+        public string? AcknowledgementNotes { get; set; }
+
         /// <summary>UTC timestamp when this job record was created.</summary>
         [BsonElement("createdAt")]
         [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]

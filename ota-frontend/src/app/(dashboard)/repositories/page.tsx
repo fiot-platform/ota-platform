@@ -2,8 +2,9 @@
 
 import * as React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, RefreshCw, Loader2, PowerOff, Eye, Trash2 } from 'lucide-react'
-import Link from 'next/link'
+import { Plus, Search, RefreshCw, Loader2, PowerOff, Eye, Trash2, Pencil, MoreVertical } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { repositoryService } from '@/services/repository.service'
 import { projectService } from '@/services/project.service'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -11,6 +12,7 @@ import { DataTable, Column } from '@/components/ui/DataTable'
 import { StatusBadge } from '@/components/ui/Badge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { RepositoryForm, RegisterRepositoryPayload } from '@/components/forms/RepositoryForm'
+import { EditRepositoryForm, UpdateRepositoryPayload } from '@/components/forms/EditRepositoryForm'
 import { RoleGuard } from '@/components/role-access/RoleGuard'
 import { useToast } from '@/components/ui/ToastProvider'
 import { Repository, UserRole } from '@/types'
@@ -19,6 +21,7 @@ import { useAuth } from '@/hooks/useAuth'
 
 export default function RepositoriesPage() {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const { toast } = useToast()
   const { role } = useAuth()
   const canFilterByProject = role === UserRole.SuperAdmin || role === UserRole.PlatformAdmin
@@ -31,6 +34,7 @@ export default function RepositoriesPage() {
   const [confirmDeactivate, setConfirmDeactivate] = React.useState<Repository | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<Repository | null>(null)
   const [repoFormOpen, setRepoFormOpen] = React.useState(false)
+  const [editTarget, setEditTarget] = React.useState<Repository | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['repositories', { search, projectId, page, pageSize }],
@@ -75,6 +79,20 @@ export default function RepositoriesPage() {
     onError: () => toast({ title: 'Failed to delete repository', variant: 'error' }),
   })
 
+  const editMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateRepositoryPayload }) =>
+      repositoryService.updateRepository(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repositories'] })
+      toast({ title: 'Repository updated', variant: 'success' })
+      setEditTarget(null)
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.message ?? 'Could not update repository'
+      toast({ title: 'Update failed', description: msg, variant: 'error' })
+    },
+  })
+
   const registerMutation = useMutation({
     mutationFn: (data: RegisterRepositoryPayload) => repositoryService.registerRepository(data),
     onSuccess: () => {
@@ -114,6 +132,15 @@ export default function RepositoriesPage() {
       ),
     },
     {
+      key: 'client',
+      header: 'Client',
+      cell: (row) => (
+        <span className="text-sm text-slate-700">
+          {row.clientName ?? '—'}
+        </span>
+      ),
+    },
+    {
       key: 'defaultBranch',
       header: 'Default Branch',
       cell: (row) => (
@@ -145,49 +172,79 @@ export default function RepositoriesPage() {
       key: 'actions',
       header: 'Actions',
       cell: (row) => (
-        <div className="flex items-center gap-1">
-          <Link
-            href={`/repositories/${row.id}`}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 transition-colors"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            View
-          </Link>
-          <RoleGuard module="Repositories" action="execute">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
             <button
-              onClick={() => handleSync(row.id)}
-              disabled={syncingId === row.id}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-accent-50 text-accent-700 hover:bg-accent-100 transition-colors disabled:opacity-50"
+              aria-label="Row actions"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-primary-700 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-accent-500"
             >
-              {syncingId === row.id ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5" />
-              )}
-              Sync
+              <MoreVertical className="w-4 h-4" />
             </button>
-          </RoleGuard>
-          <RoleGuard module="Repositories" action="update">
-            {row.isActive && (
-              <button
-                onClick={() => setConfirmDeactivate(row)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-warning-50 text-warning-700 hover:bg-warning-100 transition-colors"
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              className="bg-white rounded-xl border border-slate-200 shadow-lg py-1 z-50 min-w-[180px] animate-fade-in"
+            >
+              <DropdownMenu.Item
+                onSelect={() => router.push(`/repositories/${row.id}`)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer outline-none hover:bg-slate-50 focus:bg-slate-50"
               >
-                <PowerOff className="w-3.5 h-3.5" />
-                Deactivate
-              </button>
-            )}
-          </RoleGuard>
-          <RoleGuard module="Repositories" action="delete">
-            <button
-              onClick={() => setConfirmDelete(row)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
-              title="Delete"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </RoleGuard>
-        </div>
+                <Eye className="w-4 h-4 text-slate-500" />
+                View
+              </DropdownMenu.Item>
+
+              <RoleGuard module="Repositories" action="update">
+                <DropdownMenu.Item
+                  onSelect={() => setEditTarget(row)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer outline-none hover:bg-slate-50 focus:bg-slate-50"
+                >
+                  <Pencil className="w-4 h-4 text-primary-600" />
+                  Edit
+                </DropdownMenu.Item>
+              </RoleGuard>
+
+              <RoleGuard module="Repositories" action="execute">
+                <DropdownMenu.Item
+                  disabled={syncingId === row.id}
+                  onSelect={() => handleSync(row.id)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 cursor-pointer outline-none hover:bg-slate-50 focus:bg-slate-50 data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed"
+                >
+                  {syncingId === row.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-accent-600" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 text-accent-600" />
+                  )}
+                  Sync
+                </DropdownMenu.Item>
+              </RoleGuard>
+
+              {row.isActive && (
+                <RoleGuard module="Repositories" action="update">
+                  <DropdownMenu.Item
+                    onSelect={() => setConfirmDeactivate(row)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-warning-700 cursor-pointer outline-none hover:bg-warning-50 focus:bg-warning-50"
+                  >
+                    <PowerOff className="w-4 h-4" />
+                    Deactivate
+                  </DropdownMenu.Item>
+                </RoleGuard>
+              )}
+
+              <RoleGuard module="Repositories" action="delete">
+                <DropdownMenu.Separator className="my-1 h-px bg-slate-100" />
+                <DropdownMenu.Item
+                  onSelect={() => setConfirmDelete(row)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-danger-600 cursor-pointer outline-none hover:bg-danger-50 focus:bg-danger-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </DropdownMenu.Item>
+              </RoleGuard>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       ),
     },
   ]
@@ -286,6 +343,17 @@ export default function RepositoriesPage() {
         onSubmit={async (data) => { await registerMutation.mutateAsync(data) }}
         isLoading={registerMutation.isPending}
       />
+
+      {/* Edit Repository Form */}
+      {editTarget && (
+        <EditRepositoryForm
+          open={Boolean(editTarget)}
+          onOpenChange={(open) => !open && setEditTarget(null)}
+          repository={editTarget}
+          onSubmit={async (data) => { await editMutation.mutateAsync({ id: editTarget.id, data }) }}
+          isLoading={editMutation.isPending}
+        />
+      )}
     </div>
   )
 }

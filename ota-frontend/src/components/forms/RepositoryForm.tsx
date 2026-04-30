@@ -8,36 +8,40 @@ import { X, GitBranch, Loader2, Lock, Globe } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQuery } from '@tanstack/react-query'
 import { projectService } from '@/services/project.service'
+import { useGiteaProfile } from '@/hooks/useGiteaProfile'
+import { ProjectClientRef } from '@/types'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const repositorySchema = z.object({
-  giteaOwner: z.string().min(1, 'Gitea owner is required').max(100),
+  giteaOwner:    z.string().min(1, 'Gitea owner is required').max(100),
   giteaRepoName: z.string().min(1, 'Repository name is required').max(200),
-  projectId: z.string().min(1, 'Project is required'),
-  description: z.string().max(1000).optional(),
+  projectId:     z.string().min(1, 'Project is required'),
+  clientCode:    z.string().optional(),
+  description:   z.string().max(1000).optional(),
   defaultBranch: z.string().min(1).max(100),
-  isPrivate: z.boolean(),
+  isPrivate:     z.boolean(),
 })
 
 type RepositoryFormValues = z.infer<typeof repositorySchema>
 
 export interface RegisterRepositoryPayload {
-  giteaOwner: string
+  giteaOwner:    string
   giteaRepoName: string
-  projectId: string
-  description?: string
+  projectId:     string
+  clientCode?:   string
+  description?:  string
   defaultBranch: string
-  isPrivate: boolean
+  isPrivate:     boolean
 }
 
 interface RepositoryFormProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  preselectedProjectId?: string
+  open:                    boolean
+  onOpenChange:            (open: boolean) => void
+  preselectedProjectId?:   string
   preselectedProjectName?: string
-  onSubmit: (data: RegisterRepositoryPayload) => Promise<void>
-  isLoading?: boolean
+  onSubmit:                (data: RegisterRepositoryPayload) => Promise<void>
+  isLoading?:              boolean
 }
 
 // ─── Visibility Toggle ────────────────────────────────────────────────────────
@@ -86,59 +90,81 @@ export function RepositoryForm({
   onSubmit,
   isLoading = false,
 }: RepositoryFormProps) {
+  const { data: giteaProfile, isLoading: giteaProfileLoading } = useGiteaProfile()
+
   const {
     register,
     handleSubmit,
     control,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<RepositoryFormValues>({
     resolver: zodResolver(repositorySchema),
     defaultValues: {
-      giteaOwner: '',
+      giteaOwner:    giteaProfile?.login ?? '',
       giteaRepoName: '',
-      projectId: preselectedProjectId ?? '',
-      description: '',
+      projectId:     preselectedProjectId ?? '',
+      clientCode:    '',
+      description:   '',
       defaultBranch: 'main',
-      isPrivate: false,
+      isPrivate:     false,
     },
   })
 
-  const giteaOwner = useWatch({ control, name: 'giteaOwner' })
+  const giteaOwner    = useWatch({ control, name: 'giteaOwner' })
   const giteaRepoName = useWatch({ control, name: 'giteaRepoName' })
+  const selectedProjectId = useWatch({ control, name: 'projectId' })
 
-  const { data: projects } = useQuery({
-    queryKey: ['projects-all'],
+  // All projects — fetched once
+  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+    queryKey: ['projects-dropdown'],
     queryFn: () => projectService.getProjects({ pageSize: 200 }),
-    enabled: !preselectedProjectId,
+    enabled: open && !preselectedProjectId,
   })
+  const allProjects = projectsData?.items ?? []
+
+  // Derive the clients of the currently selected project
+  const selectedProject = allProjects.find((p) => p.id === selectedProjectId)
+  const projectClients: ProjectClientRef[] = selectedProject?.clients ?? []
 
   React.useEffect(() => {
     if (open) {
       reset({
-        giteaOwner: '',
+        giteaOwner:    giteaProfile?.login ?? '',
         giteaRepoName: '',
-        projectId: preselectedProjectId ?? '',
-        description: '',
+        projectId:     preselectedProjectId ?? '',
+        clientCode:    '',
+        description:   '',
         defaultBranch: 'main',
-        isPrivate: false,
+        isPrivate:     false,
       })
     }
-  }, [open, preselectedProjectId, reset])
+  }, [open, preselectedProjectId, reset, giteaProfile?.login])
+
+  // When the project changes, default the client to its single client (if exactly one), else clear.
+  React.useEffect(() => {
+    if (projectClients.length === 1) {
+      setValue('clientCode', projectClients[0].code, { shouldValidate: false })
+    } else {
+      setValue('clientCode', '', { shouldValidate: false })
+    }
+  }, [selectedProjectId, projectClients, setValue])
 
   const handleFormSubmit = async (values: RepositoryFormValues) => {
     await onSubmit({
-      giteaOwner: values.giteaOwner.trim(),
+      giteaOwner:    values.giteaOwner.trim(),
       giteaRepoName: values.giteaRepoName.trim(),
-      projectId: values.projectId,
-      description: values.description?.trim() || undefined,
+      projectId:     values.projectId,
+      clientCode:    values.clientCode?.trim() || undefined,
+      description:   values.description?.trim() || undefined,
       defaultBranch: values.defaultBranch.trim() || 'main',
-      isPrivate: values.isPrivate,
+      isPrivate:     values.isPrivate,
     })
   }
 
   const previewOwner = giteaOwner?.trim() || 'owner'
-  const previewRepo = giteaRepoName?.trim() || 'repo-name'
+  const previewRepo  = giteaRepoName?.trim() || 'repo-name'
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -165,64 +191,98 @@ export function RepositoryForm({
               </Dialog.Close>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
 
-              {/* Project */}
-              <div>
-                <label className="label">
-                  Project <span className="text-danger-500">*</span>
-                </label>
-                {preselectedProjectId ? (
+              {preselectedProjectId ? (
+                /* ── Pre-selected project (opened from project page) ───────── */
+                <div>
+                  <label className="label">Project</label>
                   <input
                     type="text"
                     value={preselectedProjectName ?? preselectedProjectId}
                     disabled
                     className="input bg-slate-50 text-slate-500 cursor-not-allowed"
                   />
-                ) : (
-                  <select
-                    className={`input ${errors.projectId ? 'border-danger-400' : ''}`}
-                    {...register('projectId')}
-                  >
-                    <option value="">Select a project...</option>
-                    {(projects?.items ?? []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
+                </div>
+              ) : (
+                <>
+                  {/* Project */}
+                  <div>
+                    <label className="label">Project <span className="text-danger-500">*</span></label>
+                    <select
+                      className={`input ${errors.projectId ? 'border-danger-400' : ''}`}
+                      disabled={projectsLoading}
+                      {...register('projectId')}
+                    >
+                      <option value="">
+                        {projectsLoading ? 'Loading projects…' : 'Select a project'}
                       </option>
-                    ))}
-                  </select>
-                )}
-                {errors.projectId && <p className="form-error">{errors.projectId.message}</p>}
-              </div>
+                      {allProjects.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    {errors.projectId && <p className="form-error">{errors.projectId.message}</p>}
+                  </div>
+
+                  {/* Client — derived from selected project */}
+                  <div>
+                    <label className="label">Client <span className="text-danger-500">*</span></label>
+                    {!selectedProjectId ? (
+                      <input
+                        type="text"
+                        value=""
+                        readOnly
+                        placeholder="Select a project first"
+                        className="input bg-slate-50 text-slate-400 cursor-not-allowed"
+                      />
+                    ) : projectClients.length === 0 ? (
+                      <input
+                        type="text"
+                        value="No client assigned to project"
+                        readOnly
+                        className="input bg-slate-50 text-slate-400 cursor-not-allowed"
+                      />
+                    ) : (
+                      <select className="input" {...register('clientCode')}>
+                        <option value="">Select a client…</option>
+                        {projectClients.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name} — {c.code}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Gitea Owner + Repo */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">
-                    Gitea Owner <span className="text-danger-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="org-name"
-                    className={`input font-mono ${errors.giteaOwner ? 'border-danger-400' : ''}`}
-                    {...register('giteaOwner')}
-                  />
+                  <label className="label">Gitea Owner <span className="text-danger-500">*</span></label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder={giteaProfileLoading ? 'Fetching…' : ''}
+                      className={`input font-mono pr-8 bg-slate-50 text-slate-600 cursor-not-allowed ${errors.giteaOwner ? 'border-danger-400' : ''}`}
+                      readOnly
+                      {...register('giteaOwner')}
+                    />
+                    {giteaProfileLoading && (
+                      <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />
+                    )}
+                  </div>
                   {errors.giteaOwner && <p className="form-error">{errors.giteaOwner.message}</p>}
                 </div>
                 <div>
-                  <label className="label">
-                    Repository Name <span className="text-danger-500">*</span>
-                  </label>
+                  <label className="label">Repository Name <span className="text-danger-500">*</span></label>
                   <input
                     type="text"
                     placeholder="firmware-gateway"
                     className={`input font-mono ${errors.giteaRepoName ? 'border-danger-400' : ''}`}
                     {...register('giteaRepoName')}
                   />
-                  {errors.giteaRepoName && (
-                    <p className="form-error">{errors.giteaRepoName.message}</p>
-                  )}
+                  {errors.giteaRepoName && <p className="form-error">{errors.giteaRepoName.message}</p>}
                 </div>
               </div>
 
@@ -245,9 +305,7 @@ export function RepositoryForm({
                   className={`input font-mono ${errors.defaultBranch ? 'border-danger-400' : ''}`}
                   {...register('defaultBranch')}
                 />
-                {errors.defaultBranch && (
-                  <p className="form-error">{errors.defaultBranch.message}</p>
-                )}
+                {errors.defaultBranch && <p className="form-error">{errors.defaultBranch.message}</p>}
               </div>
 
               {/* Description */}
@@ -268,17 +326,9 @@ export function RepositoryForm({
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
                 <Dialog.Close className="btn-secondary">Cancel</Dialog.Close>
                 <button type="submit" disabled={isLoading} className="btn-primary">
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Registering...
-                    </>
-                  ) : (
-                    <>
-                      <GitBranch className="w-4 h-4" />
-                      Register Repository
-                    </>
-                  )}
+                  {isLoading
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering...</>
+                    : <><GitBranch className="w-4 h-4" /> Register Repository</>}
                 </button>
               </div>
             </form>

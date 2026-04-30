@@ -1,11 +1,14 @@
 import * as React from 'react'
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import Link from 'next/link'
+import { TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react'
 import { clsx } from 'clsx'
 
 interface StatCardProps {
   label: string
   value: string | number
   icon: React.ReactNode
+  /** Optional short description shown below the value. Plain text only. */
+  description?: string
   trend?: {
     value: number
     label?: string
@@ -14,6 +17,7 @@ interface StatCardProps {
   accent?: 'primary' | 'green' | 'amber' | 'red' | 'purple' | 'navy'
   isLoading?: boolean
   onClick?: () => void
+  href?: string
   className?: string
 }
 
@@ -54,10 +58,12 @@ export function StatCard({
   label,
   value,
   icon,
+  description,
   trend,
   accent = 'primary',
   isLoading = false,
   onClick,
+  href,
   className,
 }: StatCardProps) {
   const styles = accentStyles[accent]
@@ -75,24 +81,23 @@ export function StatCard({
     )
   }
 
-  return (
-    <div
-      className={clsx(
-        'card p-5 transition-all duration-200',
-        onClick && 'cursor-pointer hover:shadow-card-hover hover:-translate-y-0.5',
-        className
-      )}
-      onClick={onClick}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
-    >
+  const isClickable = !!(onClick || href)
+
+  const content = (
+    <div className={clsx(
+      'card p-5 transition-all duration-200 group',
+      isClickable && 'cursor-pointer hover:shadow-card-hover hover:-translate-y-0.5',
+      className
+    )}>
       <div className="flex items-start justify-between">
         <div className="space-y-3 flex-1">
           <p className="text-sm font-medium text-slate-500">{label}</p>
           <p className="text-3xl font-bold text-primary-900 tracking-tight">
             {typeof value === 'number' ? value.toLocaleString() : value}
           </p>
+          {description && (
+            <p className="text-xs text-slate-500 leading-snug">{description}</p>
+          )}
           {trend && (
             <div className="flex items-center gap-1.5">
               <span
@@ -113,11 +118,31 @@ export function StatCard({
               )}
             </div>
           )}
+          {isClickable && (
+            <span className="flex items-center gap-1 text-xs font-medium text-slate-400 group-hover:text-accent-600 transition-colors">
+              View all <ArrowRight className="w-3 h-3" />
+            </span>
+          )}
         </div>
         <div className={clsx('w-11 h-11 flex items-center justify-center rounded-xl ring-1', styles.bg)}>
           <span className={styles.icon}>{icon}</span>
         </div>
       </div>
+    </div>
+  )
+
+  if (href) {
+    return <Link href={href} className="block">{content}</Link>
+  }
+
+  return (
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
+    >
+      {content}
     </div>
   )
 }

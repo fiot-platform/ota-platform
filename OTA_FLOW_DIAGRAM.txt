@@ -1,0 +1,388 @@
+================================================================================
+                     OTA PLATFORM - COMPLETE FLOW DIAGRAM
+================================================================================
+
+================================================================================
+ STAGE 1: DEVICE REGISTRATION
+================================================================================
+
+  [IoT Device]
+      |
+      | POST /api/devices
+      | { serialNumber, model, hardwareRevision, customerId,
+      |   currentFirmwareVersion, tags, metadata }
+      v
+  [Validate Serial Number]
+      | (normalize to uppercase, check uniqueness)
+      v
+  [Create Device Record in MongoDB]
+      | deviceId (GUID), status = Active
+      | serialNumber, model, hardwareRevision
+      | customerId, siteId, currentFirmwareVersion
+      v
+  [Publish MQTT Registration Event]
+      | Topic: OTA/{serialNumber}/Status
+      v
+  [Log Audit Entry] --> [Send Email Notification]
+      |
+      v
+  Device Status: ACTIVE (ready for OTA)
+
+
+================================================================================
+ STAGE 2: FIRMWARE LIFECYCLE
+================================================================================
+
+  [Upload Firmware]
+      | POST /api/firmware
+      | { version, repositoryId, projectId, fileName,
+      |   supportedModels[], supportedHardwareRevisions[],
+      |   isMandate, releaseNotes }
+      v
+  Status: DRAFT
+      |
+      | POST /api/firmware/{id}/qa-verify
+      v
+  Status: QA VERIFIED
+      |
+      | POST /api/firmware/{id}/approve
+      v
+  Status: APPROVED  <-------- Only APPROVED firmware can be deployed
+      |
+      | POST /api/firmware/{id}/assign-channel
+      v
+  Channel Assigned: Alpha | Beta | Staging | Production
+      |
+      +---> [Rejected?] POST /api/firmware/{id}/reject  --> Status: REJECTED
+      |
+      +---> [Deprecated?] POST /api/firmware/{id}/deprecate --> Status: DEPRECATED
+
+  Firmware Entity stores:
+    - firmwareId, version, repositoryId, projectId
+    - fileName, fileSha256, fileSizeBytes, downloadUrl (Gitea)
+    - supportedModels[], supportedHardwareRevisions[]
+    - minRequiredVersion, maxAllowedVersion
+    - isMandate, channel, status
+    - qaVerifiedAt, approvedAt, approvedByUserId
+
+
+================================================================================
+ STAGE 3: ROLLOUT CREATION & CONTROL
+================================================================================
+
+  [Operator creates Rollout]
+      | POST /api/rollouts
+      | { name, firmwareId, projectId, targetType,
+      |   targetIds, channel, policyId, phase, scheduledAt }
+      v
+  [Validate Firmware is APPROVED]
+      |
+      v
+  [Resolve Target Devices by TargetType]
+      |
+      +-- AllDevices    --> All registered devices in project
+      +-- Site          --> All devices with matching siteId
+      +-- DeviceGroup   --> Named group of devices
+      +-- Channel       --> Devices assigned to firmware channel
+      +-- SpecificDevices --> Explicit list of deviceIds
+      |
+      v
+  [Create OTA Jobs] (one per target device, status = PENDING)
+      |
+      v
+  Rollout Status: DRAFT
+      |
+      | POST /api/rollouts/{id}/start
+      v
+  Rollout Status: ACTIVE
+      |
+      +-- Phase: FULL   --> Dispatch ALL jobs immediately
+      |
+      +-- Phase: CANARY --> Dispatch first N% batch only
+                           (N defined in RolloutPolicy)
+
+  Rollout Control:
+    POST /api/rollouts/{id}/pause   --> PAUSED  (in-flight jobs finish)
+    POST /api/rollouts/{id}/resume  --> ACTIVE
+    POST /api/rollouts/{id}/cancel  --> CANCELLED (pending jobs cancelled)
+
+  Rollout Policy controls:
+    - canaryPercentage  : % of devices in first batch
+    - batchSize         : max devices per dispatch
+    - concurrencyLimit  : max concurrent installs
+    - maxRetries        : retry limit on failure
+    - retryDelaySeconds : wait between retries
+
+
+================================================================================
+ STAGE 4: MQTT COMMUNICATION (Device <-> Platform)
+================================================================================
+
+  +-----------+                                    +------------------+
+  |  Device   |                                    | MQTT Broker      |
+  |           |                                    |                  |
+  |           | --[OTA Request]-----------------> | OTA/Card2Web/    |
+  |           |   {deviceId, currentVersion,       | Server           |
+  |           |    trigger, timestamp, ipAddress}  |                  |
+  |           |                                    +--------+---------+
+  |           |                                             |
+  |           |                                    +--------v---------+
+  |           |                                    | MqttBackground   |
+  |           |                                    | Service          |
+  |           |                                    |                  |
+  |           |                                    | 1. Lookup device |
+  |           |                                    | 2. Check Active  |
+  |           |                                    | 3. Update heart- |
+  |           |                                    |    beat          |
+  |           |                                    | 4. Find eligible |
+  |           |                                    |    firmware:     |
+  |           |                                    |   - model match  |
+  |           |                                    |   - HW revision  |
+  |           |                                    |   - version range|
+  |           |                                    |   - Approved only|
+  |           |                                    +--------+---------+
+  |           |                                             |
+  |           |                               Update available?
+  |           |                              YES /          \ NO
+  |           |                             /                \
+  |           |              +--------------+        +--------+--------+
+  |           |              | Publish OTA  |        | Publish No-     |
+  |           |              | Metadata     |        | Update Response |
+  |           |              | topic/       |        | { status:       |
+  |           |              | {deviceId}/  |        |   "up-to-date" }|
+  |           |              | App2FIoT     |        +-----------------+
+  |           |              |              |
+  |           |              | { version,   |
+  |           |              |   downloadUrl|
+  |           |              |   SHA256,    |
+  |           |              |   fileSize,  |
+  |           |              |   mandatory, |
+  |           |              |   rollback   |
+  |           |              |   Supported }|
+  |           |              +------+-------+
+  |           |                     |
+  | <--[OTA Metadata]---------------+
+  |           |
+  +-----------+
+
+
+================================================================================
+ STAGE 5: DEVICE UPDATE EXECUTION
+================================================================================
+
+  [Device receives OTA Metadata]
+      |
+      | Publish "start" to OTA/{deviceId}/Status
+      | { status: "start", currentVersion, timestamp }
+      v
+  [Download Firmware]
+      | HTTP GET downloadUrl (Gitea release)
+      v
+  [Verify SHA256 Checksum]
+      |
+      +-- MISMATCH --> abort, report "failed"
+      |
+      v (match OK)
+  [Install Firmware]
+      |
+      | Publish "inprogress" to OTA/{deviceId}/Status
+      | { status: "inprogress", progress: 0..100 }
+      v
+  Install complete?
+      |
+      +-- YES --> Publish "success" to OTA/{deviceId}/Status
+      |           { status: "success", currentVersion: newVersion }
+      |
+      +-- NO  --> Publish "failed" to OTA/{deviceId}/Status
+                  { status: "failed", errorCode }
+                      |
+                      v
+                  [Device rollback to previous version]
+                  Publish "rollback" to OTA/{deviceId}/Status
+
+
+================================================================================
+ STAGE 6: STATUS PROCESSING (Platform receives device reports)
+================================================================================
+
+  MQTT Status Message received on OTA/{deviceId}/Status
+      |
+      v
+  [MqttBackgroundService.HandleOtaStatusAsync]
+      |
+      v
+  [Lookup Device by SerialNumber]
+      |
+      v
+  [Update Device heartbeat + otaStatus + otaProgress]
+      |
+      v
+  [Broadcast to device publishTopic]
+      | OTA/{serialNumber}/Status
+      | (for dashboard / monitoring subscribers)
+      v
+  [Log OTA History Event]
+      | (only: start, success, failed, rollback - skip inprogress)
+      v
+  Status = "start"?      --> Record version before update begins
+  Status = "success"?    --> Update device.currentFirmwareVersion = newVersion
+  Status = "failed"?     --> Log warning, keep previous version
+  Status = "rollback"?   --> Log warning, keep previous version
+      |
+      v
+  [Update OTA Job Status in MongoDB]
+      | Pending --> Downloading --> Installing --> Success | Failed
+      v
+  [Update Rollout Progress Counters]
+      | succeededCount++  or  failedCount++
+      v
+  Canary batch complete?
+      |
+      +-- YES --> Dispatch next batch of devices
+      |
+      +-- NO  --> Wait for remaining jobs
+      |
+  All jobs terminal?
+      |
+      +-- YES --> Rollout Status = COMPLETED
+      |
+      +-- NO  --> Continue monitoring
+
+
+================================================================================
+ STAGE 7: AUDIT & NOTIFICATIONS
+================================================================================
+
+  Every critical action writes an Audit Log entry:
+  +----------------------------------------------------------+
+  | AuditLogEntity                                           |
+  |   action        : DeviceRegistered | FirmwareApproved    |
+  |                   RolloutStarted | OtaJobSucceeded | ...  |
+  |   userId        : identity of actor                      |
+  |   email         : actor's email                          |
+  |   role          : actor's role at time of action         |
+  |   resourceType  : Device | Firmware | Rollout | OtaJob   |
+  |   resourceId    : MongoDB document ID                    |
+  |   before        : JSON snapshot of previous state        |
+  |   after         : JSON snapshot of new state             |
+  |   ipAddress     : caller's IP address                    |
+  |   timestamp     : UTC timestamp                          |
+  +----------------------------------------------------------+
+      |
+      +---> Email Notification (to operators / admins)
+      |
+      +---> Operator Dashboard (real-time status)
+
+
+================================================================================
+ COMPLETE END-TO-END FLOW SUMMARY
+================================================================================
+
+  [IoT Device]
+      |
+      | 1. Register device
+      v
+  [Platform: Active Device]
+      |
+      | 2. Upload + Approve firmware (Draft->QA->Approved->Channel)
+      v
+  [Approved Firmware in Gitea]
+      |
+      | 3. Operator creates & starts Rollout
+      v
+  [OTA Jobs: PENDING]
+      |
+      | 4. Device powers on, publishes OTA request
+      |    Topic: OTA/Card2Web/Server
+      v
+  [MqttBackgroundService: checks eligibility]
+      |
+      | 5. Platform publishes OTA metadata
+      |    Topic: topic/{deviceId}/App2FIoT
+      v
+  [Device: downloads + verifies + installs]
+      |
+      | 6. Device publishes status updates
+      |    Topic: OTA/{deviceId}/Status
+      |    start -> inprogress -> success | failed
+      v
+  [Platform: updates job, device, rollout records]
+      |
+      | 7. Audit log + notifications
+      v
+  [Rollout COMPLETED] --> All devices on new firmware version
+
+
+================================================================================
+ MQTT TOPICS REFERENCE
+================================================================================
+
+  Direction        Topic                          Purpose
+  -----------------------------------------------------------------------
+  Device->Server   OTA/Card2Web/Server            Device requests update
+  Server->Device   topic/{deviceId}/App2FIoT      Server sends OTA metadata
+  Device->Server   OTA/{deviceId}/Status          Device reports progress
+  Server->Broker   OTA/{serialNumber}/Status      Platform broadcasts status
+
+================================================================================
+ KEY API ENDPOINTS REFERENCE
+================================================================================
+
+  Device Management:
+    POST   /api/devices                            Register device
+    POST   /api/devices/{id}/heartbeat             Keep-alive ping
+    POST   /api/devices/{id}/check-update          Poll for update (REST alt)
+    POST   /api/devices/{id}/report-status         Report OTA outcome
+
+  Firmware Management:
+    POST   /api/firmware                           Upload firmware (Draft)
+    POST   /api/firmware/{id}/qa-verify            QA verification
+    POST   /api/firmware/{id}/approve              Release approval
+    POST   /api/firmware/{id}/reject               Reject with reason
+    POST   /api/firmware/{id}/assign-channel       Set deployment channel
+    POST   /api/firmware/{id}/deprecate            Mark deprecated
+
+  Rollout Management:
+    POST   /api/rollouts                           Create rollout
+    POST   /api/rollouts/{id}/start                Activate rollout
+    POST   /api/rollouts/{id}/pause                Pause rollout
+    POST   /api/rollouts/{id}/resume               Resume rollout
+    POST   /api/rollouts/{id}/cancel               Cancel rollout
+    GET    /api/rollouts/{id}/jobs                 List OTA jobs
+    POST   /api/rollouts/jobs/{jobId}/retry        Retry failed job
+
+================================================================================
+ OTA JOB STATUS LIFECYCLE
+================================================================================
+
+  PENDING
+    |
+    v
+  DOWNLOADING  <--- Device acknowledged, fetching firmware
+    |
+    v
+  INSTALLING   <--- Firmware verified, install in progress
+    |
+    +-- success --> SUCCESS
+    |
+    +-- failure --> FAILED
+                      |
+                      +-- retry? --> PENDING (up to maxRetries)
+                      |
+                      +-- max retries hit --> CANCELLED
+
+================================================================================
+ ROLLOUT STATUS LIFECYCLE
+================================================================================
+
+  DRAFT --> SCHEDULED --> ACTIVE --> COMPLETED
+                |             |
+                |             +--> PAUSED --> ACTIVE
+                |             |
+                v             v
+            CANCELLED     CANCELLED
+                              |
+                              v
+                           FAILED (if critical failure threshold exceeded)
+
+================================================================================

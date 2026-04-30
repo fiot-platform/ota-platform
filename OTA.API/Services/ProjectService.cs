@@ -19,8 +19,10 @@ namespace OTA.API.Services
     public class ProjectService : IProjectService
     {
         private readonly IProjectRepository _projectRepository;
+        private readonly IClientRepository _clientRepository;
         private readonly IAuditService _auditService;
         private readonly INotificationService _notificationService;
+        private readonly IEmailService _emailService;
         private readonly ILogger<ProjectService> _logger;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
@@ -28,18 +30,19 @@ namespace OTA.API.Services
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
-        /// <summary>
-        /// Initialises a new instance of <see cref="ProjectService"/>.
-        /// </summary>
         public ProjectService(
             IProjectRepository projectRepository,
+            IClientRepository clientRepository,
             IAuditService auditService,
             INotificationService notificationService,
+            IEmailService emailService,
             ILogger<ProjectService> logger)
         {
             _projectRepository   = projectRepository   ?? throw new ArgumentNullException(nameof(projectRepository));
+            _clientRepository    = clientRepository    ?? throw new ArgumentNullException(nameof(clientRepository));
             _auditService        = auditService        ?? throw new ArgumentNullException(nameof(auditService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _emailService        = emailService        ?? throw new ArgumentNullException(nameof(emailService));
             _logger              = logger              ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -53,20 +56,30 @@ namespace OTA.API.Services
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
             if (string.IsNullOrWhiteSpace(request.Name)) throw new ArgumentException("Project name is required.");
+            if (request.ClientCodes == null || request.ClientCodes.Count == 0)
+                throw new ArgumentException("At least one client must be selected.");
+
+            // Duplicate check — project name must be unique
+            var existingProjects = await _projectRepository.SearchAsync(request.Name.Trim(), 1, 5, cancellationToken: cancellationToken);
+            if (existingProjects?.Any(p => string.Equals(p.Name, request.Name.Trim(), StringComparison.OrdinalIgnoreCase)) == true)
+                throw new InvalidOperationException($"A project named '{request.Name.Trim()}' already exists.");
+
+            var clients = await ResolveClientsAsync(request.ClientCodes, cancellationToken);
 
             var project = new ProjectEntity
             {
-                Name = request.Name.Trim(),
-                Description = request.Description?.Trim(),
-                CustomerId = request.CustomerId,
-                CustomerName = request.CustomerName?.Trim() ?? string.Empty,
-                BusinessUnit = request.BusinessUnit?.Trim(),
-                GiteaOrgName = request.GiteaOrgName?.Trim(),
-                Tags = request.Tags ?? new List<string>(),
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                CreatedByUserId = callerUserId
+                Name            = request.Name.Trim(),
+                Description     = request.Description?.Trim(),
+                Clients         = clients,
+                CustomerId      = clients[0].Code,
+                CustomerName    = clients[0].Name,
+                BusinessUnit    = request.BusinessUnit?.Trim(),
+                GiteaOrgName    = request.GiteaOrgName?.Trim(),
+                Tags            = request.Tags ?? new List<string>(),
+                IsActive        = true,
+                CreatedAt       = DateTime.UtcNow,
+                UpdatedAt       = DateTime.UtcNow,
+                CreatedByUserId = callerUserId,
             };
 
             await _projectRepository.InsertAsync(project, cancellationToken);
@@ -94,6 +107,8 @@ namespace OTA.API.Services
                 $"New project '{project.Name}' was created.",
                 new Dictionary<string, string> { ["type"] = "project_created", ["projectId"] = project.Id, ["name"] = project.Name },
                 cancellationToken: CancellationToken.None);
+
+            _ = _emailService.SendCrudNotificationAsync(callerEmail, callerEmail, "Created", "Project", project.Name, CancellationToken.None);
 
             return MapToDto(project);
         }
@@ -126,6 +141,14 @@ namespace OTA.API.Services
 
             if (request.GiteaOrgName != null)
                 project.GiteaOrgName = request.GiteaOrgName.Trim();
+
+            if (request.ClientCodes != null && request.ClientCodes.Count > 0)
+            {
+                var clients = await ResolveClientsAsync(request.ClientCodes, cancellationToken);
+                project.Clients      = clients;
+                project.CustomerId   = clients[0].Code;
+                project.CustomerName = clients[0].Name;
+            }
 
             if (request.Tags != null)
                 project.Tags = request.Tags;
@@ -303,19 +326,38 @@ namespace OTA.API.Services
 
         private static ProjectDto MapToDto(ProjectEntity p) => new ProjectDto
         {
-            Id = p.Id,
-            ProjectId = p.Id,
-            Name = p.Name,
-            Description = p.Description,
-            CustomerId = p.CustomerId,
-            CustomerName = p.CustomerName,
-            BusinessUnit = p.BusinessUnit,
-            GiteaOrgName = p.GiteaOrgName,
-            Tags = p.Tags ?? new List<string>(),
-            IsActive = p.IsActive,
-            CreatedAt = p.CreatedAt,
-            UpdatedAt = p.UpdatedAt,
-            CreatedByUserId = p.CreatedByUserId
+            Id              = p.Id,
+            ProjectId       = p.Id,
+            Name            = p.Name,
+            Description     = p.Description,
+            CustomerId      = p.CustomerId,
+            CustomerName    = p.CustomerName,
+            Clients         = p.Clients ?? new List<ProjectClientRef>(),
+            BusinessUnit    = p.BusinessUnit,
+            GiteaOrgName    = p.GiteaOrgName,
+            Tags            = p.Tags ?? new List<string>(),
+            IsActive        = p.IsActive,
+            CreatedAt       = p.CreatedAt,
+            UpdatedAt       = p.UpdatedAt,
+            CreatedByUserId = p.CreatedByUserId,
         };
+
+        /// <summary>
+        /// Looks up each client code and returns a <see cref="ProjectClientRef"/> list.
+        /// Throws if any code is unknown.
+        /// </summary>
+        private async Task<List<ProjectClientRef>> ResolveClientsAsync(
+            List<string> codes,
+            CancellationToken cancellationToken)
+        {
+            var refs = new List<ProjectClientRef>(codes.Count);
+            foreach (var code in codes)
+            {
+                var client = await _clientRepository.GetByCodeAsync(code, cancellationToken)
+                    ?? throw new KeyNotFoundException($"Client with code '{code}' was not found.");
+                refs.Add(new ProjectClientRef { Code = client.Code, Name = client.Name });
+            }
+            return refs;
+        }
     }
 }

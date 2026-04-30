@@ -9,6 +9,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useQuery } from '@tanstack/react-query'
 import { repositoryService } from '@/services/repository.service'
 import { projectService } from '@/services/project.service'
+import { clientService } from '@/services/client.service'
 import { firmwareService } from '@/services/firmware.service'
 import { FirmwareChannel, FirmwareVersion } from '@/types'
 import { formatFileSize } from '@/utils/formatters'
@@ -26,6 +27,7 @@ const firmwareSchema = z.object({
   fileSha256: z.string().max(64).optional(),
   fileSizeBytes: z.coerce.number().min(0).optional(),
   isMandate: z.boolean(),
+  checkTrial: z.boolean(),
   minRequiredVersion: z.string().max(50).optional(),
   maxAllowedVersion: z.string().max(50).optional(),
   supportedModels: z.array(z.string()).optional(),
@@ -249,6 +251,7 @@ export function CreateFirmwareForm({
       fileSha256: '',
       fileSizeBytes: 0,
       isMandate: false,
+      checkTrial: false,
       minRequiredVersion: '',
       maxAllowedVersion: '',
       supportedModels: [],
@@ -257,7 +260,14 @@ export function CreateFirmwareForm({
 
   const supportedModels = watch('supportedModels') ?? []
 
+  const [selectedClientCode, setSelectedClientCode] = React.useState('')
   const [selectedProjectId, setSelectedProjectId] = React.useState('')
+
+  const { data: clients } = useQuery({
+    queryKey: ['clients-all'],
+    queryFn: () => clientService.getClients({ pageSize: 200 }),
+    enabled: !preselectedRepositoryId,
+  })
 
   const { data: projects } = useQuery({
     queryKey: ['projects-all'],
@@ -265,14 +275,46 @@ export function CreateFirmwareForm({
     enabled: !preselectedRepositoryId,
   })
 
+  const selectedProject = React.useMemo(
+    () => (projects?.items ?? []).find((p) => p.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
+  )
+
+  const filteredClients = React.useMemo(() => {
+    const all = clients?.items ?? []
+    if (!selectedProject) return []
+    const codes = new Set<string>()
+    if (selectedProject.customerId) codes.add(selectedProject.customerId)
+    for (const c of selectedProject.clients ?? []) codes.add(c.code)
+    return all.filter((c) => codes.has(c.code))
+  }, [clients, selectedProject])
+
   const { data: repos } = useQuery({
     queryKey: ['repositories-by-project', selectedProjectId],
     queryFn: () => repositoryService.getRepositories({ projectId: selectedProjectId || undefined, pageSize: 200 }),
-    enabled: !preselectedRepositoryId && !!selectedProjectId,
+    enabled: !preselectedRepositoryId && !!selectedProjectId && !!selectedClientCode,
   })
+
+  const selectedClientName = React.useMemo(
+    () => (clients?.items ?? []).find((c) => c.code === selectedClientCode)?.name ?? null,
+    [clients, selectedClientCode]
+  )
+
+  // Match the repo's per-repo client tag first (clientCode); fall back to clientName for repos
+  // registered before per-repo client tagging existed.
+  const filteredRepos = React.useMemo(() => {
+    const all = repos?.items ?? []
+    if (!selectedClientCode) return all
+    return all.filter((r) => {
+      if (r.clientCode) return r.clientCode === selectedClientCode
+      if (r.clientName && selectedClientName) return r.clientName === selectedClientName
+      return false
+    })
+  }, [repos, selectedClientCode, selectedClientName])
 
   React.useEffect(() => {
     if (open) {
+      setSelectedClientCode('')
       setSelectedProjectId('')
       reset({
         repositoryId: preselectedRepositoryId ?? '',
@@ -285,6 +327,7 @@ export function CreateFirmwareForm({
         fileSha256: '',
         fileSizeBytes: 0,
         isMandate: false,
+        checkTrial: false,
         minRequiredVersion: '',
         maxAllowedVersion: '',
         supportedModels: [],
@@ -319,7 +362,7 @@ export function CreateFirmwareForm({
             </div>
 
             <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
-              {/* Project + Repository */}
+              {/* Project + Client + Repository */}
               {!preselectedRepositoryId && (
                 <div>
                   <label className="label">
@@ -330,12 +373,37 @@ export function CreateFirmwareForm({
                     value={selectedProjectId}
                     onChange={(e) => {
                       setSelectedProjectId(e.target.value)
+                      setSelectedClientCode('')
                       setValue('repositoryId', '')
                     }}
                   >
                     <option value="">Select a project...</option>
                     {(projects?.items ?? []).map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {!preselectedRepositoryId && (
+                <div>
+                  <label className="label">
+                    Client <span className="text-danger-500">*</span>
+                  </label>
+                  <select
+                    className={`input ${!selectedProjectId ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : ''}`}
+                    disabled={!selectedProjectId}
+                    value={selectedClientCode}
+                    onChange={(e) => {
+                      setSelectedClientCode(e.target.value)
+                      setValue('repositoryId', '')
+                    }}
+                  >
+                    <option value="">
+                      {selectedProjectId ? 'Select a client...' : 'Select a project first...'}
+                    </option>
+                    {filteredClients.map((c) => (
+                      <option key={c.id} value={c.code}>{c.name}</option>
                     ))}
                   </select>
                 </div>
@@ -354,14 +422,18 @@ export function CreateFirmwareForm({
                   />
                 ) : (
                   <select
-                    className={`input ${errors.repositoryId ? 'border-danger-400' : ''} ${!selectedProjectId ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : ''}`}
-                    disabled={!selectedProjectId}
+                    className={`input ${errors.repositoryId ? 'border-danger-400' : ''} ${!selectedProjectId || !selectedClientCode ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : ''}`}
+                    disabled={!selectedProjectId || !selectedClientCode}
                     {...register('repositoryId')}
                   >
                     <option value="">
-                      {selectedProjectId ? 'Select a repository...' : 'Select a project first...'}
+                      {!selectedProjectId
+                        ? 'Select a project first...'
+                        : !selectedClientCode
+                          ? 'Select a client first...'
+                          : 'Select a repository...'}
                     </option>
-                    {(repos?.items ?? []).map((r) => (
+                    {filteredRepos.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.giteaOwner}/{r.giteaRepo ?? r.name}
                       </option>
@@ -396,7 +468,7 @@ export function CreateFirmwareForm({
                 </div>
               </div>
 
-              {/* Channel + Mandate */}
+              {/* Channel + flags */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Channel</label>
@@ -406,7 +478,7 @@ export function CreateFirmwareForm({
                     ))}
                   </select>
                 </div>
-                <div className="flex items-end pb-1">
+                <div className="flex flex-col gap-3 justify-end pb-1">
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
